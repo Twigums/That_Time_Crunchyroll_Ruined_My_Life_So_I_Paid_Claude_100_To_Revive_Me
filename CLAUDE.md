@@ -37,12 +37,12 @@ lydarr-py/
         ├── config.py       # AppConfig from env vars (Transmission URL/auth, media file, download dir)
         ├── torrent_client.py  # is_client_up(), wait_for_client(), add_magnet(), _rpc() via Transmission JSON-RPC
         ├── nyaa_search.py  # search_episode(), search_chapter(): query variants, filter_submitters(), prefer_hevc()
-        ├── file_manager.py # MediaEntry(title, type, submitters, deprecated), MediaState (get/remove/update), read_entries(), TOML I/O
-        ├── tracker.py      # track_media(cfg, state, entry) async coroutine; dispatches anime vs manga; downloads into per-title subdir under LYDARR_DEFAULT_DIR named from AniList display title (_safe_dirname strips invalid path chars)
+        ├── file_manager.py # MediaEntry(title, type, submitters, deprecated, download_dir), MediaState (get/remove/update), read_entries(), TOML I/O
+        ├── tracker.py      # track_media(cfg, state, entry) async coroutine; dispatches anime vs manga; downloads into entry.download_dir if set, else a per-title subdir under LYDARR_DEFAULT_DIR named from AniList display title (_safe_dirname strips invalid path chars)
         ├── web/            # FastAPI web UI
         │   ├── app.py      # create_app(cfg, state); app.state holds cfg, anime_state, daemon_task
         │   ├── routes/
-        │   │   ├── anime.py    # /api/anime/search|list|add|remove|deprecate|reactivate|submitters|status
+        │   │   ├── anime.py    # /api/anime/search|list|add|remove|deprecate|reactivate|submitters|status (status cached + single-flight to spare AniList under multiple clients)
         │   │   ├── torrents.py # /api/torrents/search, /api/torrents/add
         │   │   └── daemon.py   # /api/daemon/status|start|stop; /api/rtorrent/status; /api/transmission/start|stop
         │   └── static/
@@ -97,6 +97,7 @@ Fields:
 - `submitters` — case-insensitive substring match against torrent title; falls back to all results if empty or no match
 - `last_chapter` — manga only; daemon downloads chapters after this number
 - `search_name` — optional override for Nyaa lookups only; AniList always uses `title` directly
+- `download_dir` — optional per-entry override for the full save path (including the title folder, e.g. `/media/Anime/MARRIAGETOXIN`); empty falls back to `LYDARR_DEFAULT_DIR/<AniList display title>`. Editable in the web UI (auto-populated with the full default path)
 - `deprecated` — optional boolean (default `false`); entry is preserved but hidden/inactive
 
 Read with stdlib `tomllib`; written with a minimal custom serialiser (no extra dependency).

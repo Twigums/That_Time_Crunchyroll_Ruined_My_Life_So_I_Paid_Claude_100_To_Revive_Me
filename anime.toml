@@ -3,6 +3,7 @@ title = "Dr. STONE SCIENCE FUTURE Cour 3"
 type = "anime"
 submitters = ["SubsPlease"]
 search_name = "Dr. STONE s4"
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/Dr Stone/Season 4"
 
 [[media]]
 title = "Classroom of the Elite 4th Season: Second Year, First Semester"

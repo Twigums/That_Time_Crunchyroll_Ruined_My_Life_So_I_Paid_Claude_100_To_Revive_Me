@@ -868,6 +868,10 @@ async function loadWatchlist() {
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">Submitters</div>
               <input type="text" id="wl-sub-input-${i}" style="width:100%;font-size:12px" placeholder="SubsPlease, Erai-raws" value="${esc(e.submitters.join(', '))}">
             </div>
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">Save path</div>
+              <input type="text" id="wl-dir-input-${i}" style="width:100%;font-size:12px" data-default="${esc(e.default_path || '')}" placeholder="${esc(e.default_path || '')}" value="${esc(e.download_dir || e.default_path || '')}">
+            </div>
             <div style="display:flex;gap:6px">
               <button data-title="${esc(e.title)}" onclick="saveSubs(${i}, this)" style="padding:3px 10px;font-size:12px">Save</button>
               <button class="secondary" onclick="toggleEditSubs(${i})" style="padding:3px 10px;font-size:12px">Cancel</button>
@@ -930,13 +934,16 @@ async function saveSubs(idx, btn) {
   const title = btn.dataset.title;
   const subInput = document.getElementById('wl-sub-input-' + idx);
   const snInput = document.getElementById('wl-sn-input-' + idx);
+  const dirInput = document.getElementById('wl-dir-input-' + idx);
   const submitters = subInput.value.split(',').map(s => s.trim()).filter(Boolean);
   const search_name = snInput ? snInput.value.trim() : '';
+  let download_dir = dirInput ? dirInput.value.trim() : '';
+  if (dirInput && download_dir === (dirInput.dataset.default || '')) download_dir = '';
   try {
     await fetch('/api/anime/submitters', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, submitters, search_name }),
+      body: JSON.stringify({ title, submitters, search_name, download_dir }),
     });
     toggleEditSubs(idx);
     loadWatchlist();

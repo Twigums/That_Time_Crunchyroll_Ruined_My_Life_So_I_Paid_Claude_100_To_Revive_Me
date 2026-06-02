@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from lydarr.config import AppConfig
@@ -49,13 +49,86 @@ def test_list_with_entries(tmp_path):
 
 
 def test_add_new_entry(tmp_path):
+    from anilist.types import AnilistMedia, MediaType, MediaStatus
     cfg = _make_cfg(tmp_path)
     state = _make_state()
-    with TestClient(create_app(cfg, state)) as client:
-        resp = client.post("/api/anime/add", json = {"title": "Solo Leveling", "type": "anime", "submitters": []})
+
+    fake_media = AnilistMedia(
+        id = 1,
+        title_english = "Solo Leveling",
+        title_romaji = None,
+        media_type = MediaType.ANIME,
+        status = MediaStatus.RELEASING,
+        episodes = 12,
+        chapters = None,
+        next_airing_at = 1700000000,
+        next_airing_episode = 3,
+    )
+
+    mock = AsyncMock(return_value = fake_media)
+    with patch("lydarr.web.routes.anime.find_by_title", mock):
+        with TestClient(create_app(cfg, state)) as client:
+            resp = client.post("/api/anime/add", json = {"title": "Solo Leveling", "type": "anime", "submitters": []})
+
     assert resp.status_code == 200
-    assert resp.json()["added"] is True
+    data = resp.json()
+    assert data["added"] is True
     assert "Solo Leveling" in state.titles()
+    # Adding immediately checks AniList for that one anime's release date.
+    mock.assert_awaited_once_with("Solo Leveling", MediaType.ANIME)
+    assert data["status"]["status"] == "RELEASING"
+    assert data["status"]["next_airing_at"] == 1700000000
+
+
+def test_add_does_not_fail_on_anilist_error(tmp_path):
+    cfg = _make_cfg(tmp_path)
+    state = _make_state()
+
+    mock = AsyncMock(side_effect = RuntimeError("anilist down"))
+    with patch("lydarr.web.routes.anime.find_by_title", mock):
+        with TestClient(create_app(cfg, state)) as client:
+            resp = client.post("/api/anime/add", json = {"title": "Solo Leveling"})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["added"] is True
+    assert data["status"] is None
+    assert "Solo Leveling" in state.titles()
+
+
+def test_add_while_daemon_running_spawns_tracker(tmp_path):
+    cfg = _make_cfg(tmp_path)
+    state = _make_state()
+    app = create_app(cfg, state)
+
+    spawn = MagicMock()
+    running = MagicMock()
+    running.done.return_value = False
+
+    with patch("lydarr.web.routes.anime.find_by_title", new_callable = AsyncMock, return_value = None), \
+         patch("lydarr.web.routes.anime.spawn_tracker", spawn):
+        with TestClient(app) as client:
+            app.state.daemon_task = running
+            resp = client.post("/api/anime/add", json = {"title": "Solo Leveling"})
+
+    assert resp.json()["added"] is True
+    # A tracker is spawned immediately for the new entry so the daemon logs its schedule.
+    spawn.assert_called_once()
+    assert spawn.call_args[0][1].title == "Solo Leveling"
+
+
+def test_add_while_daemon_stopped_does_not_spawn(tmp_path):
+    cfg = _make_cfg(tmp_path)
+    state = _make_state()
+
+    spawn = MagicMock()
+    with patch("lydarr.web.routes.anime.find_by_title", new_callable = AsyncMock, return_value = None), \
+         patch("lydarr.web.routes.anime.spawn_tracker", spawn):
+        with TestClient(create_app(cfg, state)) as client:
+            resp = client.post("/api/anime/add", json = {"title": "Solo Leveling"})
+
+    assert resp.json()["added"] is True
+    spawn.assert_not_called()
 
 
 def test_add_duplicate_entry(tmp_path):
@@ -200,3 +273,33 @@ def test_get_status_not_found(tmp_path):
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] is None
+
+
+def test_get_status_is_cached(tmp_path):
+    from anilist.types import AnilistMedia, MediaType, MediaStatus
+    cfg = _make_cfg(tmp_path)
+    state = _make_state()
+
+    fake_media = AnilistMedia(
+        id = 153406,
+        title_english = "Solo Leveling Season 2",
+        title_romaji = None,
+        media_type = MediaType.ANIME,
+        status = MediaStatus.RELEASING,
+        episodes = 25,
+        chapters = None,
+        next_airing_at = 1700000000,
+        next_airing_episode = 5,
+    )
+
+    mock = AsyncMock(return_value = fake_media)
+    with patch("lydarr.web.routes.anime.find_by_title", mock):
+        with TestClient(create_app(cfg, state)) as client:
+            first = client.get("/api/anime/status?title=Solo+Leveling")
+            second = client.get("/api/anime/status?title=Solo+Leveling")
+            third = client.get("/api/anime/status?title=Solo+Leveling")
+
+    assert first.json() == second.json() == third.json()
+    assert first.json()["next_airing_episode"] == 5
+    # Despite three page-load requests, AniList is hit only once.
+    assert mock.await_count == 1

@@ -91,7 +91,7 @@ async def _step_anime(cfg: AppConfig, state: MediaState, entry: MediaEntry) -> b
         await asyncio.sleep(6 * 3600)
         return True
 
-    download_dir = os.path.join(cfg.default_dir, _safe_dirname(info.display_title()))
+    download_dir = entry.download_dir or os.path.join(cfg.default_dir, _safe_dirname(info.display_title()))
     _log(name, f"Will save to: {download_dir}")
 
     match info.status:
@@ -159,7 +159,7 @@ async def _step_manga(cfg: AppConfig, state: MediaState, entry: MediaEntry) -> b
         return True
 
     total = info.chapters or 0
-    download_dir = os.path.join(cfg.default_dir, _safe_dirname(info.display_title()))
+    download_dir = entry.download_dir or os.path.join(cfg.default_dir, _safe_dirname(info.display_title()))
 
     if info.status == MediaStatus.FINISHED and total > 0:
         new_chs = list(range(entry.last_chapter + 1, total + 1))

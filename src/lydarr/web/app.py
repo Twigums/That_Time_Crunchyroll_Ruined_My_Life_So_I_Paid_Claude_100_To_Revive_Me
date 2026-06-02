@@ -1,4 +1,5 @@
 """FastAPI application factory."""
+import asyncio
 import secrets
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -49,6 +50,10 @@ def create_app(cfg: AppConfig, state: MediaState) -> FastAPI:
         app.state.anime_state = state
         app.state.daemon_task = None
         app.state.daemon_started_at = None
+        app.state.tracker_tasks = set()
+        app.state.status_cache = {}
+        app.state.status_inflight = {}
+        app.state.status_lock = asyncio.Lock()
         yield
 
     app = FastAPI(title = "lydarr", lifespan = lifespan)

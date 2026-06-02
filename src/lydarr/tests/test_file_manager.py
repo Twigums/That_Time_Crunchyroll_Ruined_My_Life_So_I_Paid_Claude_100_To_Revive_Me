@@ -95,6 +95,20 @@ def test_write_with_search_name(tmp_path):
     assert "Solo Leveling S2" in content
 
 
+def test_write_with_download_dir_roundtrip(tmp_path):
+    f = tmp_path / "media.toml"
+    entries = [
+        MediaEntry(title = "Solo Leveling", media_type = "anime", submitters = [], download_dir = "/media/anime"),
+        MediaEntry(title = "Dan Da Dan", media_type = "anime", submitters = []),
+    ]
+    _write(str(f), entries)
+    content = f.read_text()
+    assert 'download_dir = "/media/anime"' in content
+    recovered = read_entries(str(f))
+    assert recovered[0].download_dir == "/media/anime"
+    assert recovered[1].download_dir == ""
+
+
 def test_media_state_get_found():
     entries = [MediaEntry(title = "Solo Leveling"), MediaEntry(title = "Dan Da Dan")]
     state = MediaState(entries)
@@ -160,11 +174,12 @@ async def test_media_state_remove_nonexistent(tmp_path):
 async def test_media_state_update_entry(tmp_path):
     f = tmp_path / "media.toml"
     state = MediaState([MediaEntry(title = "Solo Leveling", submitters = [])])
-    await state.update_entry(str(f), "Solo Leveling", ["SubsPlease"], "Solo Leveling S2")
+    await state.update_entry(str(f), "Solo Leveling", ["SubsPlease"], "Solo Leveling S2", "/media/anime")
     entries = state.entries()
     e = next(e for e in entries if e.title == "Solo Leveling")
     assert e.submitters == ["SubsPlease"]
     assert e.search_name == "Solo Leveling S2"
+    assert e.download_dir == "/media/anime"
 
 
 @pytest.mark.asyncio

@@ -18,11 +18,21 @@ async def _run_daemon(cfg, state) -> None:
     await asyncio.gather(*(track_media(cfg, state, entry) for entry in active))
 
 
+def _daemon_running(app) -> bool:
+    task = app.state.daemon_task
+    return task is not None and not task.done()
+
+
+def spawn_tracker(app, entry) -> None:
+    task = asyncio.create_task(track_media(app.state.cfg, app.state.anime_state, entry))
+    app.state.tracker_tasks.add(task)
+    task.add_done_callback(app.state.tracker_tasks.discard)
+
+
 @router.get("/daemon/status")
 async def daemon_status(request: Request):
-    task = request.app.state.daemon_task
     started_at = request.app.state.daemon_started_at
-    running = task is not None and not task.done()
+    running = _daemon_running(request.app)
     return {
         "running": running,
         "tracking": request.app.state.anime_state.active_titles(),
@@ -32,8 +42,7 @@ async def daemon_status(request: Request):
 
 @router.post("/daemon/start")
 async def daemon_start(request: Request):
-    task = request.app.state.daemon_task
-    if task is not None and not task.done():
+    if _daemon_running(request.app):
         return {"ok": False, "reason": "already running"}
     cfg = request.app.state.cfg
     state = request.app.state.anime_state
@@ -47,13 +56,19 @@ async def daemon_start(request: Request):
 @router.post("/daemon/stop")
 async def daemon_stop(request: Request):
     task = request.app.state.daemon_task
-    if task is None or task.done():
+    extra = list(request.app.state.tracker_tasks)
+    if (task is None or task.done()) and not extra:
         return {"ok": False, "reason": "not running"}
-    task.cancel()
-    try:
-        await task
-    except asyncio.CancelledError:
-        pass
+    for t in extra:
+        t.cancel()
+    if task is not None:
+        task.cancel()
+    for t in extra + ([task] if task is not None else []):
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+    request.app.state.tracker_tasks.clear()
     request.app.state.daemon_task = None
     return {"ok": True}
 
