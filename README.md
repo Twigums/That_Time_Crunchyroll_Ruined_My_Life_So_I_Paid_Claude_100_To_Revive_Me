@@ -1,6 +1,6 @@
-# lydarr-py
+# That Time Crunchyroll Ruined My Life, So I Paid Claude $100 To Revive Me?
 
-aka "That Time Crunchyroll Ruined My Life, So I Paid Claude $100 To Revive Me?" (クランチロールに人生をぶっ壊された　クロードに１００００円を払っちゃってオレは復活した件）
+"That Time Crunchyroll Ruined My Life, So I Paid Claude $100 To Revive Me?" (クランチロールに人生をぶっ壊された　クロードに１００００円を払っちゃってオレは復活した件）
 
 Anime torrent downloader daemon that tracks airing anime/manga. The daemon waits for each episode or chapter's release, searches nyaa, and adds them to `transmission-daemon` automatically. A web UI is also included for QOL to search for and manage anime/manga.
 
