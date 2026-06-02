@@ -16,23 +16,26 @@ async def _rpc(url: str, user: str | None, password: str | None, method: str, ar
     global _session_id
     payload = {"method": method, "arguments": arguments or {}}
     auth = (user, password) if user else None
+    async with _session_lock:
+        sid = _session_id
     async with httpx.AsyncClient() as client:
-        async with _session_lock:
+        r = await client.post(
+            url, json = payload,
+            headers = {"X-Transmission-Session-Id": sid},
+            auth = auth,
+            timeout = 10,
+        )
+        if r.status_code == 409:
+            sid = r.headers.get("X-Transmission-Session-Id", "0")
+            async with _session_lock:
+                _session_id = sid
             r = await client.post(
                 url, json = payload,
-                headers = {"X-Transmission-Session-Id": _session_id},
+                headers = {"X-Transmission-Session-Id": sid},
                 auth = auth,
                 timeout = 10,
             )
-            if r.status_code == 409:
-                _session_id = r.headers.get("X-Transmission-Session-Id", "0")
-                r = await client.post(
-                    url, json = payload,
-                    headers = {"X-Transmission-Session-Id": _session_id},
-                    auth = auth,
-                    timeout = 10,
-                )
-        return r
+    return r
 
 
 async def is_client_up(url: str, user: str | None, password: str | None) -> bool:
@@ -91,4 +94,4 @@ async def remove_when_done(url: str, user: str | None, password: str | None, tor
                 _logger.info("Removed torrent %d from Transmission after download completed.", torrent_id)
                 return
         except Exception as exc:
-            _logger.error("remove_when_done error for torrent %d: %s", torrent_id, exc)
+            _logger.error("remove_when_done error for torrent %d: %r", torrent_id, exc)

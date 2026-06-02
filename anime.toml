@@ -24,8 +24,8 @@ submitters = ["SubsPlease"]
 [[media]]
 title = "Witch Hat Atelier"
 type = "anime"
-submitters = ["Erai-raws"]
-search_name = "Tongari Boushi no Atelier"
+submitters = ["ToonsHub"]
+search_name = "Witch Hat Atelier [ToonsHub] Dual"
 
 [[media]]
 title = "That Time I Got Reincarnated as a Slime Season 4"
@@ -48,6 +48,20 @@ search_name = "Jidou Hanbaiki ni Umarekawatta Ore wa Meikyuu wo Samayou S3"
 [[media]]
 title = "Re:ZERO -Starting Life in Another World- Season 4"
 type = "anime"
-submitters = []
+submitters = ["SubsPlease"]
 search_name = "Re:Zero kara Hajimeru Isekai Seikatsu 4th Season 1080"
 
+[[media]]
+title = "Wistoria: Wand and Sword Season 2"
+type = "anime"
+submitters = []
+
+[[media]]
+title = "Gals Can't Be Kind to Otaku!?"
+type = "anime"
+submitters = ["Unfucked"]
+
+[[media]]
+title = "Daemons of the Shadow Realm"
+type = "anime"
+submitters = ["ToonsHub"]

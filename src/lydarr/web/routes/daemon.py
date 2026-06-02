@@ -76,11 +76,11 @@ async def transmission_stop(request: Request):
             stdout = asyncio.subprocess.DEVNULL,
             stderr = asyncio.subprocess.DEVNULL,
         )
-        await proc.wait()
+        asyncio.create_task(proc.wait())
     except Exception as exc:
         _log.error("transmission stop failed: %s", exc)
         return {"ok": False, "reason": "internal error"}
-    for _ in range(10):
+    for _ in range(20):
         await asyncio.sleep(1)
         if not await is_client_up(cfg.transmission_url, cfg.transmission_user, cfg.transmission_pass):
             _log.info("Transmission stopped.")
@@ -100,13 +100,13 @@ async def transmission_start(request: Request):
             stdout = asyncio.subprocess.DEVNULL,
             stderr = asyncio.subprocess.DEVNULL,
         )
-        await proc.wait()
+        asyncio.create_task(proc.wait())
     except FileNotFoundError:
         return {"ok": False, "reason": "systemctl not found"}
     except Exception as exc:
         _log.error("transmission start failed: %s", exc)
         return {"ok": False, "reason": "internal error"}
-    for _ in range(10):
+    for _ in range(25):
         await asyncio.sleep(1)
         if await is_client_up(cfg.transmission_url, cfg.transmission_user, cfg.transmission_pass):
             _log.info("Transmission started.")
