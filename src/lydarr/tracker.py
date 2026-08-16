@@ -114,7 +114,7 @@ async def _step_anime(cfg: AppConfig, state: MediaState, entry: MediaEntry) -> b
                 return True
             ep_num = info.next_airing_episode
             air_time = datetime.fromtimestamp(info.next_airing_at, tz = timezone.utc)
-            trigger = air_time + timedelta(minutes = 30)
+            trigger = air_time + timedelta(hours = 1)
             _log(name, f"Next ep {_pad(ep_num)} airs at {air_time}. Searching at {trigger}.")
             await _sleep_until(trigger)
             await _wait_and_add_episode(cfg, nyaa_name, ep_num, entry.submitters, download_dir)
