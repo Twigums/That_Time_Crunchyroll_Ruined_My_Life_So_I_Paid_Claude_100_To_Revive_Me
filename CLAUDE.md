@@ -29,9 +29,9 @@ lydarr-py/
 │   │       ├── rss.py      # RSS feed → list[Torrent]
 │   │       └── html.py     # HTML listing/detail → list[Torrent] / TorrentDetail
 │   └── anilist/            # AniList GraphQL client — media search, status, and episode air times
-│       ├── types.py        # AnilistMedia, MediaType, MediaStatus, AnilistError
+│       ├── types.py        # AnilistMedia, AiringEpisode, MediaType, MediaStatus, AnilistError
 │       ├── http.py         # graphql() POST helper
-│       └── search.py       # search(), find_by_title() — retries with pre-colon substring when full title returns no results
+│       └── search.py       # search(), find_by_title() — retries with pre-colon substring when full title returns no results; airing_schedules() batches every tracked show's episode times for a date range in one paginated query
 └── src/
     └── lydarr/
         ├── config.py       # AppConfig from env vars (Transmission URL/auth, media file, download dir)
@@ -42,11 +42,11 @@ lydarr-py/
         ├── web/            # FastAPI web UI
         │   ├── app.py      # create_app(cfg, state); app.state holds cfg, anime_state, daemon_task
         │   ├── routes/
-        │   │   ├── anime.py    # /api/anime/search|list|add|remove|deprecate|reactivate|submitters|status (status cached + single-flight to spare AniList under multiple clients)
+        │   │   ├── anime.py    # /api/anime/search|list|add|remove|deprecate|reactivate|submitters|status|calendar (status and calendar ranges cached + single-flight via _cached() to spare AniList under multiple clients)
         │   │   ├── torrents.py # /api/torrents/search, /api/torrents/add
         │   │   └── daemon.py   # /api/daemon/status|start|stop; /api/rtorrent/status; /api/transmission/start|stop
         │   └── static/
-        │       └── index.html  # Single-page UI: 3 resizable panels, floating Start/Stop FAB
+        │       └── index.html  # Single-page UI: 3 resizable panels, floating Start/Stop FAB; middle panel has Watchlist and Calendar tabs (month/week episode grid, per-show colours, click an episode to search it)
         └── __main__.py     # asyncio.run(main()); starts daemon + optional web server; --host/--port flags
 ```
 

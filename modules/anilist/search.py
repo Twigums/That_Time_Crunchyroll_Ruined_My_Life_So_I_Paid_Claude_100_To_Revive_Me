@@ -1,5 +1,5 @@
 """AniList search and best-match lookup functions."""
-from anilist.types import AnilistMedia, AnilistError, MediaType, MediaStatus
+from anilist.types import AiringEpisode, AnilistMedia, AnilistError, MediaType, MediaStatus
 from anilist.http import graphql
 
 _SEARCH_QUERY = """
@@ -18,6 +18,23 @@ query ($search: String, $type: MediaType) {
   }
 }
 """
+
+
+_SCHEDULE_QUERY = """
+query ($ids: [Int], $start: Int, $end: Int, $page: Int) {
+  Page(page: $page, perPage: 50) {
+    pageInfo { hasNextPage }
+    airingSchedules(mediaId_in: $ids, airingAt_greater: $start, airingAt_lesser: $end, sort: TIME) {
+      mediaId
+      episode
+      airingAt
+      media { duration }
+    }
+  }
+}
+"""
+
+_MAX_SCHEDULE_PAGES = 10
 
 
 def _parse(m: dict) -> AnilistMedia:
@@ -43,6 +60,30 @@ def _parse(m: dict) -> AnilistMedia:
 async def search(query: str, media_type: MediaType) -> list[AnilistMedia]:
     data = await graphql(_SEARCH_QUERY, {"search": query, "type": media_type.value})
     return [_parse(m) for m in data["Page"]["media"]]
+
+
+async def airing_schedules(media_ids: list[int], start: int, end: int) -> list[AiringEpisode]:
+    """Episodes airing in [start, end] for the given media, as unix timestamps."""
+    if not media_ids:
+        return []
+    # AniList's airingAt_greater/_lesser bounds are exclusive.
+    variables = {"ids": list(media_ids), "start": start - 1, "end": end + 1}
+    episodes: list[AiringEpisode] = []
+    for page in range(1, _MAX_SCHEDULE_PAGES + 1):
+        data = await graphql(_SCHEDULE_QUERY, {**variables, "page": page})
+        chunk = data["Page"]["airingSchedules"]
+        episodes.extend(
+            AiringEpisode(
+                media_id = n["mediaId"],
+                episode = n["episode"],
+                airing_at = n["airingAt"],
+                duration = (n.get("media") or {}).get("duration"),
+            )
+            for n in chunk
+        )
+        if not data["Page"]["pageInfo"]["hasNextPage"]:
+            break
+    return episodes
 
 
 async def find_by_title(title: str, media_type: MediaType) -> AnilistMedia | None:

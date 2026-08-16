@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
+from anilist.types import AiringEpisode, AnilistError, AnilistMedia, MediaStatus, MediaType
 from lydarr.config import AppConfig
 from lydarr.file_manager import MediaEntry, MediaState
 from lydarr.tracker import DEFAULT_CHECK_DELAY
@@ -179,6 +180,120 @@ def test_update_submitters(tmp_path):
     e = next(e for e in entries if e.title == "Solo Leveling")
     assert e.submitters == ["SubsPlease", "Erai-raws"]
     assert e.search_name == "Solo Leveling S2"
+
+
+def _media(media_id: int, title: str) -> AnilistMedia:
+    return AnilistMedia(
+        id = media_id,
+        title_english = title,
+        title_romaji = title,
+        media_type = MediaType.ANIME,
+        status = MediaStatus.RELEASING,
+        episodes = 12,
+        chapters = None,
+        next_airing_at = None,
+        next_airing_episode = None,
+    )
+
+
+def _calendar_state() -> MediaState:
+    return _make_state([
+        MediaEntry(title = "Solo Leveling"),
+        MediaEntry(title = "Dan Da Dan"),
+        MediaEntry(title = "One Piece", media_type = "manga"),
+        MediaEntry(title = "Old Show", deprecated = True),
+    ])
+
+
+def test_calendar_returns_episodes_for_tracked_anime(tmp_path):
+    cfg = _make_cfg(tmp_path)
+    looked_up = []
+
+    async def fake_find(title, media_type):
+        looked_up.append(title)
+        return {"Solo Leveling": _media(1, "Solo Leveling"),
+                "Dan Da Dan": _media(2, "Dan Da Dan")}.get(title)
+
+    schedules = [
+        AiringEpisode(media_id = 1, episode = 5, airing_at = 1755000000, duration = 24),
+        AiringEpisode(media_id = 2, episode = 9, airing_at = 1755100000, duration = 23),
+        AiringEpisode(media_id = 77, episode = 1, airing_at = 1755200000, duration = 24),
+    ]
+    with patch("lydarr.web.routes.anime.find_by_title", new_callable = AsyncMock, side_effect = fake_find), \
+         patch("lydarr.web.routes.anime.airing_schedules", new_callable = AsyncMock, return_value = schedules) as mock_sched, \
+         TestClient(create_app(cfg, _calendar_state())) as client:
+        resp = client.get("/api/anime/calendar?start=1754000000&end=1756000000")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["unresolved"] == []
+    # Manga and deprecated entries are not on the calendar.
+    assert sorted(looked_up) == ["Dan Da Dan", "Solo Leveling"]
+    assert mock_sched.call_args.args == ([1, 2], 1754000000, 1756000000)
+    # An id we did not ask about is dropped rather than shown without a title.
+    assert data["episodes"] == [
+        {"media_id": 1, "episode": 5, "airing_at": 1755000000, "duration": 24, "title": "Solo Leveling"},
+        {"media_id": 2, "episode": 9, "airing_at": 1755100000, "duration": 23, "title": "Dan Da Dan"},
+    ]
+
+
+def test_calendar_reports_titles_missing_from_anilist(tmp_path):
+    cfg = _make_cfg(tmp_path)
+    state = _make_state([MediaEntry(title = "Solo Leveling"), MediaEntry(title = "Nonexistent Show")])
+
+    async def fake_find(title, media_type):
+        return _media(1, title) if title == "Solo Leveling" else None
+
+    with patch("lydarr.web.routes.anime.find_by_title", new_callable = AsyncMock, side_effect = fake_find), \
+         patch("lydarr.web.routes.anime.airing_schedules", new_callable = AsyncMock, return_value = []), \
+         TestClient(create_app(cfg, state)) as client:
+        data = client.get("/api/anime/calendar?start=1&end=2").json()
+
+    assert data["unresolved"] == ["Nonexistent Show"]
+    assert data["episodes"] == []
+
+
+def test_calendar_survives_anilist_failure(tmp_path):
+    cfg = _make_cfg(tmp_path)
+    state = _make_state([MediaEntry(title = "Solo Leveling")])
+
+    with patch("lydarr.web.routes.anime.find_by_title", new_callable = AsyncMock,
+               return_value = _media(1, "Solo Leveling")), \
+         patch("lydarr.web.routes.anime.airing_schedules", new_callable = AsyncMock,
+               side_effect = AnilistError("Too Many Requests")), \
+         TestClient(create_app(cfg, state)) as client:
+        resp = client.get("/api/anime/calendar?start=1&end=2")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["episodes"] == []
+    assert "Too Many Requests" in data["error"]
+
+
+def test_calendar_caches_repeated_ranges(tmp_path):
+    cfg = _make_cfg(tmp_path)
+    state = _make_state([MediaEntry(title = "Solo Leveling")])
+
+    with patch("lydarr.web.routes.anime.find_by_title", new_callable = AsyncMock,
+               return_value = _media(1, "Solo Leveling")), \
+         patch("lydarr.web.routes.anime.airing_schedules", new_callable = AsyncMock,
+               return_value = []) as mock_sched, \
+         TestClient(create_app(cfg, state)) as client:
+        client.get("/api/anime/calendar?start=1&end=2")
+        client.get("/api/anime/calendar?start=1&end=2")
+        client.get("/api/anime/calendar?start=1&end=3")
+
+    assert mock_sched.await_count == 2
+
+
+def test_calendar_rejects_empty_range(tmp_path):
+    cfg = _make_cfg(tmp_path)
+    with patch("lydarr.web.routes.anime.find_by_title", new_callable = AsyncMock) as mock_find, \
+         TestClient(create_app(cfg, _calendar_state())) as client:
+        data = client.get("/api/anime/calendar?start=100&end=100").json()
+
+    assert data == {"episodes": [], "unresolved": []}
+    mock_find.assert_not_called()
 
 
 def test_update_check_delay(tmp_path):

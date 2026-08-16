@@ -53,6 +53,8 @@ def create_app(cfg: AppConfig, state: MediaState) -> FastAPI:
         app.state.tracker_tasks = set()
         app.state.status_cache = {}
         app.state.status_inflight = {}
+        app.state.schedule_cache = {}
+        app.state.schedule_inflight = {}
         app.state.status_lock = asyncio.Lock()
         yield
 

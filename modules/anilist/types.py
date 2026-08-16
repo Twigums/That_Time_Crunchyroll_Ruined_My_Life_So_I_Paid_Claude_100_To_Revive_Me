@@ -34,5 +34,13 @@ class AnilistMedia:
         return self.title_english or self.title_romaji or f"ID:{self.id}"
 
 
+@dataclass(frozen = True)
+class AiringEpisode:
+    media_id: int
+    episode: int
+    airing_at: int
+    duration: int | None = None
+
+
 class AnilistError(Exception):
     pass

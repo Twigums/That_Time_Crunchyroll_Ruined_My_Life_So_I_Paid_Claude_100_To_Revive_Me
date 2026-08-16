@@ -8,8 +8,8 @@ from typing import Literal
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
-from anilist.search import search as anilist_search, find_by_title
-from anilist.types import MediaType
+from anilist.search import airing_schedules, search as anilist_search, find_by_title
+from anilist.types import AnilistError, MediaType
 from lydarr.file_manager import MediaEntry
 from lydarr.tracker import DEFAULT_CHECK_DELAY, _safe_dirname
 from lydarr.web.routes.daemon import _daemon_running, spawn_tracker
@@ -22,6 +22,8 @@ router = APIRouter(prefix = "/api")
 # AniList API when several clients load the watchlist at once (each entry would
 # otherwise trigger a fresh request on every page load, per client).
 _STATUS_TTL = 600.0
+# Calendar ranges are re-requested every time the user pages through months.
+_SCHEDULE_TTL = 300.0
 
 
 @router.get("/anime/search")
@@ -151,28 +153,25 @@ async def update_submitters(body: SubmittersBody, request: Request):
 async def _resolve_status(title: str, media_type: MediaType) -> dict:
     info = await find_by_title(title, media_type)
     if info is None:
-        return {"status": None, "next_airing_at": None, "next_airing_episode": None}
+        return {"id": None, "status": None, "next_airing_at": None, "next_airing_episode": None}
     return {
+        "id": info.id,
         "status": info.status.value,
         "next_airing_at": info.next_airing_at,
         "next_airing_episode": info.next_airing_episode,
     }
 
 
-async def _cached_status(app, title: str, media_type: MediaType) -> dict:
-    key = (title, media_type.value)
-    cache = app.state.status_cache
-    inflight = app.state.status_inflight
-
+async def _cached(app, cache: dict, inflight: dict, key, factory, ttl: float):
     async with app.state.status_lock:
         hit = cache.get(key)
         if hit is not None and hit[0] > time.monotonic():
             return hit[1]
-        # Single-flight: concurrent requests for the same title share one lookup.
+        # Single-flight: concurrent requests for the same key share one lookup.
         task = inflight.get(key)
         owner = task is None
         if owner:
-            task = asyncio.create_task(_resolve_status(title, media_type))
+            task = asyncio.create_task(factory())
             inflight[key] = task
 
     if not owner:
@@ -186,11 +185,81 @@ async def _cached_status(app, title: str, media_type: MediaType) -> dict:
         raise
     async with app.state.status_lock:
         inflight.pop(key, None)
-        cache[key] = (time.monotonic() + _STATUS_TTL, payload)
+        cache[key] = (time.monotonic() + ttl, payload)
     return payload
+
+
+async def _cached_status(app, title: str, media_type: MediaType) -> dict:
+    return await _cached(
+        app, app.state.status_cache, app.state.status_inflight,
+        (title, media_type.value),
+        lambda: _resolve_status(title, media_type),
+        _STATUS_TTL,
+    )
+
+
+async def _resolve_schedule(media_ids: tuple[int, ...], start: int, end: int) -> list[dict]:
+    episodes = await airing_schedules(list(media_ids), start, end)
+    return [
+        {
+            "media_id": e.media_id,
+            "episode": e.episode,
+            "airing_at": e.airing_at,
+            "duration": e.duration,
+        }
+        for e in episodes
+    ]
 
 
 @router.get("/anime/status")
 async def get_status(title: str, request: Request, type: str = "anime"):
     media_type = MediaType.MANGA if type == "manga" else MediaType.ANIME
     return await _cached_status(request.app, title, media_type)
+
+
+@router.get("/anime/calendar")
+async def get_calendar(start: int, end: int, request: Request):
+    """Episodes airing between two unix timestamps, for every tracked anime."""
+    if end <= start:
+        return {"episodes": [], "unresolved": []}
+
+    entries = [
+        e for e in request.app.state.anime_state.entries()
+        if e.media_type != "manga" and not e.deprecated
+    ]
+    lookups = await asyncio.gather(
+        *(_cached_status(request.app, e.title, MediaType.ANIME) for e in entries),
+        return_exceptions = True,
+    )
+
+    titles: dict[int, str] = {}
+    unresolved: list[str] = []
+    for entry, payload in zip(entries, lookups):
+        media_id = payload.get("id") if isinstance(payload, dict) else None
+        if media_id is None:
+            unresolved.append(entry.title)
+        else:
+            titles[media_id] = entry.title
+
+    if not titles:
+        return {"episodes": [], "unresolved": unresolved}
+
+    media_ids = tuple(sorted(titles))
+    try:
+        episodes = await _cached(
+            request.app, request.app.state.schedule_cache, request.app.state.schedule_inflight,
+            (media_ids, start, end),
+            lambda: _resolve_schedule(media_ids, start, end),
+            _SCHEDULE_TTL,
+        )
+    except (AnilistError, OSError) as exc:
+        _logger.warning("Calendar lookup failed: %s", exc)
+        return {"episodes": [], "unresolved": unresolved, "error": str(exc)}
+
+    return {
+        "episodes": [
+            {**e, "title": titles[e["media_id"]]}
+            for e in episodes if e["media_id"] in titles
+        ],
+        "unresolved": unresolved,
+    }

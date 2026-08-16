@@ -340,6 +340,156 @@
   .watchlist-item.deprecated .wl-title-text { font-size: 13px; font-weight: 500; }
   .section-sep { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 
+  /* ── Panel tabs ── */
+  .tabs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tabs .tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 4px 10px 6px;
+  }
+  .tabs .tab:hover { background: none; color: var(--text); }
+  .tabs .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ── Calendar ── */
+  .cal-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .cal-toolbar button { padding: 3px 10px; font-size: 12px; }
+  .cal-nav { display: flex; gap: 4px; }
+  .cal-title { font-weight: 600; font-size: 13px; flex: 1; min-width: 100px; }
+  .cal-view-toggle { margin-bottom: 0; }
+  .cal-view-toggle button { flex: none; }
+
+  .cal-month {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .cal-dow {
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    text-align: center;
+    padding: 4px 0;
+  }
+  .cal-day { background: var(--bg); min-height: 76px; padding: 3px 4px; min-width: 0; }
+  .cal-day.other { background: #0a0a14; }
+  .cal-day.other .cal-daynum { opacity: 0.4; }
+  .cal-day.today { background: var(--surface); box-shadow: inset 0 0 0 1px var(--accent); }
+  .cal-daynum { font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
+  .cal-day.today .cal-daynum { color: var(--accent); font-weight: 700; }
+
+  .cal-chip {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    width: 100%;
+    padding: 1px 4px;
+    margin-bottom: 2px;
+    border: none;
+    border-left: 3px solid var(--accent);
+    border-radius: 3px;
+    color: var(--text);
+    font-size: 11px;
+    text-align: left;
+    overflow: hidden;
+  }
+  .cal-chip:hover { filter: brightness(1.45); }
+  .cal-chip .t { color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .cal-chip .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cal-more {
+    background: none; border: none; padding: 0 3px;
+    color: var(--text-muted); font-size: 10px; border-radius: 3px;
+  }
+  .cal-more:hover { background: var(--surface2); color: var(--text); }
+
+  .cal-week { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .cal-week-scroll { overflow-x: auto; }
+  .cal-week-inner { min-width: 520px; }
+  .cal-week-head {
+    display: grid;
+    grid-template-columns: 42px repeat(7, minmax(0, 1fr));
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+  .cal-week-head div { text-align: center; padding: 4px 2px; font-size: 11px; color: var(--text-muted); }
+  .cal-week-head .dnum { display: block; font-size: 14px; font-weight: 600; color: var(--text); }
+  .cal-week-head .is-today .dnum { color: var(--accent); }
+  .cal-grid-scroll { max-height: 58vh; overflow-y: auto; }
+  .cal-grid { display: grid; grid-template-columns: 42px repeat(7, minmax(0, 1fr)); }
+  .cal-gutter-hour {
+    height: 44px;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-align: right;
+    padding-right: 5px;
+    transform: translateY(-6px);
+  }
+  .cal-col {
+    position: relative;
+    border-left: 1px solid #1a1a2e;
+    background-image: repeating-linear-gradient(
+      to bottom, transparent 0, transparent 43px, #1a1a2e 43px, #1a1a2e 44px);
+  }
+  .cal-col.today-col { background-color: rgba(124, 106, 247, 0.05); }
+  .cal-event {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    padding: 1px 4px;
+    border: none;
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 10px;
+    line-height: 1.25;
+    text-align: left;
+    overflow: hidden;
+  }
+  /* Anything under ~40 min is too short to stack time above title. */
+  .cal-event.short { flex-direction: row; align-items: baseline; gap: 4px; }
+  .cal-event:hover { filter: brightness(1.45); z-index: 4; }
+  .cal-event .ev-t { color: var(--text-muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+  .cal-event .ev-n { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cal-event:not(.short) .ev-n { white-space: normal; }
+  .cal-now { position: absolute; left: 0; right: 0; border-top: 2px solid var(--red); z-index: 5; pointer-events: none; }
+  .cal-now::before {
+    content: ''; position: absolute; left: -4px; top: -5px;
+    width: 8px; height: 8px; border-radius: 50%; background: var(--red);
+  }
+
+  .cal-legend { display: flex; flex-wrap: wrap; gap: 3px 6px; margin-top: 10px; }
+  .cal-legend span {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--text-muted);
+    transition: background 0.12s, color 0.12s;
+  }
+  .cal-legend span.hl { background: var(--surface2); color: var(--text); }
+  .cal-legend i { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; transition: transform 0.12s; }
+  .cal-legend span.hl i { transform: scale(1.3); }
+
   /* ── Toast ── */
   #daemon-toggle {
     position: fixed;
@@ -422,10 +572,35 @@
 
   <div class="panel-resize-handle" data-min-left="200" data-min-right="250"></div>
 
-  <!-- MIDDLE: Watchlist -->
+  <!-- MIDDLE: Watchlist / Calendar -->
   <div class="panel" style="flex:1">
-    <h2>Watchlist <button class="secondary" style="font-size:11px;padding:2px 8px" onclick="loadWatchlist()">↺</button></h2>
-    <div id="watchlist-results" class="results"></div>
+    <div class="tabs">
+      <button class="tab active" id="tab-btn-watchlist" onclick="setPanelTab('watchlist')">Watchlist</button>
+      <button class="tab" id="tab-btn-calendar" onclick="setPanelTab('calendar')">Calendar</button>
+      <span style="flex:1"></span>
+      <button class="secondary" style="font-size:11px;padding:2px 8px" onclick="refreshPanelTab()" title="Refresh">↺</button>
+    </div>
+
+    <div id="tab-pane-watchlist">
+      <div id="watchlist-results" class="results"></div>
+    </div>
+
+    <div id="tab-pane-calendar" style="display:none">
+      <div class="cal-toolbar">
+        <div class="cal-nav">
+          <button class="secondary" onclick="calShift(-1)" title="Previous">‹</button>
+          <button class="secondary" onclick="calToday()">Today</button>
+          <button class="secondary" onclick="calShift(1)" title="Next">›</button>
+        </div>
+        <div class="cal-title" id="cal-title"></div>
+        <div class="type-toggle cal-view-toggle">
+          <button id="cal-view-month" class="active" onclick="setCalView('month')">Month</button>
+          <button id="cal-view-week" onclick="setCalView('week')">Week</button>
+        </div>
+      </div>
+      <div id="cal-error"></div>
+      <div id="cal-body"></div>
+    </div>
   </div>
 
   <div class="panel-resize-handle" data-min-left="250" data-min-right="350"></div>
@@ -824,11 +999,16 @@ async function addTorrent(idx, btn) {
 }
 
 // ── Watchlist ─────────────────────────────────────────────────────────────
+let watchlistEntries = [];
+
 async function loadWatchlist() {
   const el = document.getElementById('watchlist-results');
   try {
     const r = await fetch('/api/anime/list');
     const entries = await r.json();
+    watchlistEntries = entries;
+    // The tracked set drives the calendar, so cached ranges no longer apply.
+    calCache.clear();
     if (!entries.length) {
       el.innerHTML = '<p class="empty-msg">No anime tracked.</p>';
       return;
@@ -1001,6 +1181,8 @@ async function removeAnime(btn) {
     const d = await r.json();
     if (d.removed) {
       btn.closest('.watchlist-item').remove();
+      watchlistEntries = watchlistEntries.filter(e => e.title !== title);
+      calCache.clear();
       const el = document.getElementById('watchlist-results');
       if (!el.children.length) el.innerHTML = '<p class="empty-msg">No anime tracked.</p>';
     } else {
@@ -1009,6 +1191,347 @@ async function removeAnime(btn) {
   } catch {
     btn.disabled = false;
   }
+}
+
+// ── Panel tabs ────────────────────────────────────────────────────────────
+let panelTab = 'watchlist';
+
+function setPanelTab(tab) {
+  panelTab = tab;
+  for (const t of ['watchlist', 'calendar']) {
+    document.getElementById('tab-btn-' + t).classList.toggle('active', t === tab);
+    document.getElementById('tab-pane-' + t).style.display = t === tab ? '' : 'none';
+  }
+  if (tab === 'calendar') loadCalendar();
+}
+
+function refreshPanelTab() {
+  if (panelTab === 'calendar') loadCalendar(true);
+  else loadWatchlist();
+}
+
+// ── Calendar ──────────────────────────────────────────────────────────────
+const CAL_COLORS = ['#7c6af7','#22c55e','#3b82f6','#f59e0b','#ec4899','#14b8a6','#ef4444','#a855f7','#84cc16','#f97316'];
+const HOUR_PX = 44;
+const DOW = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+let calView = 'month';
+let calCursor = startOfDay(new Date());
+let calEvents = [];
+let calLoading = false;
+let calError = '';
+let calNote = '';
+let calExpandedDay = null;
+let calScrolledOnce = false;
+const calCache = new Map();
+
+function startOfDay(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function startOfWeek(d) { const x = startOfDay(d); return addDays(x, -x.getDay()); }
+function dayKey(d) { return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
+function isToday(d) { return dayKey(d) === dayKey(new Date()); }
+
+function calRange() {
+  if (calView === 'week') return { start: startOfWeek(calCursor), days: 7 };
+  const first = new Date(calCursor.getFullYear(), calCursor.getMonth(), 1);
+  const last = new Date(calCursor.getFullYear(), calCursor.getMonth() + 1, 0);
+  const start = startOfWeek(first);
+  const end = addDays(startOfWeek(last), 7);
+  return { start, days: Math.round((end - start) / 86400000) };
+}
+
+function calRangeKey() {
+  const { start, days } = calRange();
+  return `${start.getTime()}-${days}`;
+}
+
+function calTitle() {
+  if (calView === 'month') return `${MONTHS[calCursor.getMonth()]} ${calCursor.getFullYear()}`;
+  const start = calRange().start;
+  const end = addDays(start, 6);
+  const right = start.getMonth() === end.getMonth()
+    ? `${end.getDate()}`
+    : `${MONTHS_SHORT[end.getMonth()]} ${end.getDate()}`;
+  return `${MONTHS_SHORT[start.getMonth()]} ${start.getDate()} – ${right}, ${end.getFullYear()}`;
+}
+
+function setCalView(view) {
+  if (calView === view) return;
+  calView = view;
+  calScrolledOnce = false;
+  calExpandedDay = null;
+  document.getElementById('cal-view-month').classList.toggle('active', view === 'month');
+  document.getElementById('cal-view-week').classList.toggle('active', view === 'week');
+  loadCalendar();
+}
+
+function calShift(dir) {
+  calCursor = calView === 'week'
+    ? addDays(calCursor, 7 * dir)
+    : new Date(calCursor.getFullYear(), calCursor.getMonth() + dir, 1);
+  calExpandedDay = null;
+  loadCalendar();
+}
+
+function calToday() {
+  calCursor = startOfDay(new Date());
+  calExpandedDay = null;
+  calScrolledOnce = false;
+  loadCalendar();
+}
+
+async function loadCalendar(force = false) {
+  const { start, days } = calRange();
+  const end = addDays(start, days);
+  const key = calRangeKey();
+  if (force) calCache.delete(key);
+
+  calError = '';
+  calNote = '';
+  if (calCache.has(key)) {
+    const hit = calCache.get(key);
+    calEvents = hit.episodes;
+    calNote = hit.note;
+    calLoading = false;
+    renderCalendar();
+    return;
+  }
+
+  calEvents = [];
+  calLoading = true;
+  renderCalendar();
+
+  let episodes = [], note = '', failed = '';
+  try {
+    const r = await fetch('/api/anime/calendar?start=' + Math.floor(start.getTime() / 1000) +
+                          '&end=' + Math.floor(end.getTime() / 1000));
+    const d = await r.json();
+    episodes = d.episodes || [];
+    if (d.error) failed = 'AniList: ' + d.error;
+    if ((d.unresolved || []).length) note = 'Not found on AniList: ' + d.unresolved.join(', ');
+    if (!failed) calCache.set(key, { episodes, note });
+  } catch {
+    failed = 'Error loading calendar.';
+  }
+
+  // The user may have paged to another range while this was in flight.
+  if (calRangeKey() !== key) return;
+  calEvents = episodes;
+  calNote = note;
+  calError = failed;
+  calLoading = false;
+  renderCalendar();
+}
+
+function calColor(title) {
+  let h = 0;
+  for (let i = 0; i < title.length; i++) h = (h * 31 + title.charCodeAt(i)) >>> 0;
+  return CAL_COLORS[h % CAL_COLORS.length];
+}
+
+function fmtClock(d) {
+  const h = d.getHours();
+  const m = d.getMinutes();
+  const suffix = h >= 12 ? 'p' : 'a';
+  const h12 = h % 12 || 12;
+  return m ? `${h12}:${String(m).padStart(2, '0')}${suffix}` : `${h12}${suffix}`;
+}
+
+function calEventsByDay() {
+  const map = new Map();
+  for (const e of calEvents) {
+    const k = dayKey(new Date(e.airing_at * 1000));
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(e);
+  }
+  for (const list of map.values()) list.sort((a, b) => a.airing_at - b.airing_at);
+  return map;
+}
+
+let calHighlighted = null;
+
+// Hovering an episode picks its show out of the colour key below the grid.
+function calHighlight(title) {
+  if (title === calHighlighted) return;
+  calHighlighted = title;
+  document.querySelectorAll('#cal-body .cal-legend span').forEach(el => {
+    el.classList.toggle('hl', title !== null && el.dataset.title === title);
+  });
+}
+
+function _initCalHover() {
+  const body = document.getElementById('cal-body');
+  body.addEventListener('mouseover', e => {
+    const item = e.target.closest('.cal-chip, .cal-event');
+    calHighlight(item ? item.dataset.title : null);
+  });
+  body.addEventListener('mouseleave', () => calHighlight(null));
+}
+
+function renderCalendar() {
+  calHighlighted = null;
+  document.getElementById('cal-title').innerHTML =
+    esc(calTitle()) + (calLoading ? ' <span class="spinner"></span>' : '');
+  document.getElementById('cal-error').innerHTML =
+    calError ? `<div class="error-banner">${esc(calError)}</div>` : '';
+  const body = document.getElementById('cal-body');
+  if (calView === 'week') renderCalWeek(body);
+  else renderCalMonth(body);
+}
+
+function calFooter() {
+  const titles = [...new Set(calEvents.map(e => e.title))].sort();
+  const legend = titles.length
+    ? `<div class="cal-legend">${titles.map(t =>
+        `<span data-title="${esc(t)}"><i style="background:${calColor(t)}"></i>${esc(t)}</span>`).join('')}</div>`
+    : `<p class="empty-msg">${calLoading ? 'Loading…' : 'No episodes scheduled in this range.'}</p>`;
+  const note = calNote ? `<p class="label-muted" style="margin-top:6px">${esc(calNote)}</p>` : '';
+  return legend + note;
+}
+
+function calChipHtml(e) {
+  const c = calColor(e.title);
+  const t = new Date(e.airing_at * 1000);
+  return `<button class="cal-chip" style="border-left-color:${c};background:${c}26"
+    data-title="${esc(e.title)}" data-ep="${e.episode}" onclick="calSearch(this)"
+    title="${esc(e.title)} · Ep ${e.episode} · ${esc(fmtClock(t))}"
+    ><span class="t">${esc(fmtClock(t))}</span><span class="n">${esc(e.title)}</span><span class="t">E${e.episode}</span></button>`;
+}
+
+function calToggleDay(key) {
+  calExpandedDay = calExpandedDay === key ? null : key;
+  renderCalendar();
+}
+
+function renderCalMonth(body) {
+  const { start, days } = calRange();
+  const byDay = calEventsByDay();
+  const month = calCursor.getMonth();
+  const cells = DOW.map(d => `<div class="cal-dow">${d}</div>`);
+
+  for (let i = 0; i < days; i++) {
+    const day = addDays(start, i);
+    const key = dayKey(day);
+    const evs = byDay.get(key) || [];
+    const expanded = calExpandedDay === key;
+    const shown = expanded ? evs : evs.slice(0, 3);
+    let more = '';
+    if (evs.length > shown.length) {
+      more = `<button class="cal-more" onclick="calToggleDay('${key}')">+${evs.length - shown.length} more</button>`;
+    } else if (expanded && evs.length > 3) {
+      more = `<button class="cal-more" onclick="calToggleDay('${key}')">less</button>`;
+    }
+    cells.push(`<div class="cal-day${day.getMonth() === month ? '' : ' other'}${isToday(day) ? ' today' : ''}">
+      <div class="cal-daynum">${day.getDate()}</div>${shown.map(calChipHtml).join('')}${more}</div>`);
+  }
+
+  body.innerHTML = `<div class="cal-month">${cells.join('')}</div>` + calFooter();
+}
+
+// Assigns side-by-side columns to episodes that air at overlapping times.
+function calLayoutDay(evs) {
+  const items = evs.map(e => {
+    const t = new Date(e.airing_at * 1000);
+    const startMin = t.getHours() * 60 + t.getMinutes();
+    return { ...e, _start: startMin, _end: startMin + (e.duration || 24) };
+  }).sort((a, b) => a._start - b._start);
+
+  const out = [];
+  let cluster = [], clusterEnd = -1;
+  const flush = () => {
+    if (!cluster.length) return;
+    const colEnds = [];
+    for (const ev of cluster) {
+      let col = colEnds.findIndex(end => end <= ev._start);
+      if (col === -1) { col = colEnds.length; colEnds.push(ev._end); }
+      else colEnds[col] = ev._end;
+      ev.col = col;
+    }
+    for (const ev of cluster) { ev.cols = colEnds.length; out.push(ev); }
+    cluster = [];
+    clusterEnd = -1;
+  };
+  for (const ev of items) {
+    if (cluster.length && ev._start >= clusterEnd) flush();
+    cluster.push(ev);
+    clusterEnd = Math.max(clusterEnd, ev._end);
+  }
+  flush();
+  return out;
+}
+
+function nowTopPx() {
+  const now = new Date();
+  return ((now.getHours() * 60 + now.getMinutes()) / 60 * HOUR_PX).toFixed(1);
+}
+
+function renderCalWeek(body) {
+  const start = calRange().start;
+  const byDay = calEventsByDay();
+
+  const head = ['<div></div>'];
+  const cols = [];
+  for (let i = 0; i < 7; i++) {
+    const day = addDays(start, i);
+    head.push(`<div class="${isToday(day) ? 'is-today' : ''}">${DOW[i]}<span class="dnum">${day.getDate()}</span></div>`);
+
+    const blocks = calLayoutDay(byDay.get(dayKey(day)) || []).map(ev => {
+      const c = calColor(ev.title);
+      const t = new Date(ev.airing_at * 1000);
+      const top = ev._start / 60 * HOUR_PX;
+      const height = Math.max(21, (ev._end - ev._start) / 60 * HOUR_PX);
+      const width = 100 / ev.cols;
+      return `<button class="cal-event${height < 30 ? ' short' : ''}" data-title="${esc(ev.title)}" data-ep="${ev.episode}"
+        onclick="calSearch(this)" title="${esc(ev.title)} · Ep ${ev.episode} · ${esc(fmtClock(t))}"
+        style="top:${top.toFixed(1)}px;height:${height.toFixed(1)}px;left:calc(${(ev.col * width).toFixed(2)}% + 2px);width:calc(${width.toFixed(2)}% - 4px);border-left-color:${c};background:${c}33"
+        ><span class="ev-t">${esc(fmtClock(t))}</span><span class="ev-n">${esc(ev.title)}</span><span class="ev-t">E${ev.episode}</span></button>`;
+    }).join('');
+
+    const nowLine = isToday(day) ? `<div class="cal-now" style="top:${nowTopPx()}px"></div>` : '';
+    cols.push(`<div class="cal-col${isToday(day) ? ' today-col' : ''}" style="height:${24 * HOUR_PX}px">${blocks}${nowLine}</div>`);
+  }
+
+  const gutter = [];
+  for (let h = 0; h < 24; h++) {
+    gutter.push(`<div class="cal-gutter-hour">${h === 0 ? '' : (h % 12 || 12) + (h < 12 ? 'am' : 'pm')}</div>`);
+  }
+
+  const prev = document.getElementById('cal-grid-scroll');
+  const prevTop = prev ? prev.scrollTop : null;
+
+  body.innerHTML = `<div class="cal-week"><div class="cal-week-scroll"><div class="cal-week-inner">
+      <div class="cal-week-head">${head.join('')}</div>
+      <div class="cal-grid-scroll" id="cal-grid-scroll">
+        <div class="cal-grid"><div>${gutter.join('')}</div>${cols.join('')}</div>
+      </div>
+    </div></div></div>` + calFooter();
+
+  const scroller = document.getElementById('cal-grid-scroll');
+  if (calScrolledOnce && prevTop !== null) {
+    scroller.scrollTop = prevTop;
+  } else {
+    const hours = calEvents.map(e => new Date(e.airing_at * 1000).getHours());
+    const anchor = hours.length ? Math.min(...hours) : new Date().getHours();
+    scroller.scrollTop = Math.max(0, (anchor - 1) * HOUR_PX);
+    calScrolledOnce = true;
+  }
+}
+
+function calUpdateNowLine() {
+  const line = document.querySelector('#tab-pane-calendar .cal-now');
+  if (line) line.style.top = nowTopPx() + 'px';
+}
+
+function calSearch(btn) {
+  const title = btn.dataset.title;
+  const entry = watchlistEntries.find(e => e.title === title);
+  _watchlistTitle = title;
+  setSearchType('anime');
+  document.getElementById('torrent-q').value = (entry && entry.search_name) || title;
+  document.getElementById('torrent-ep').value = btn.dataset.ep || '';
+  searchTorrents();
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────
@@ -1113,6 +1636,7 @@ function _initColResize() {
 }
 _initPanelResize();
 _initColResize();
+_initCalHover();
 pollRtorrent();
 pollDaemon();
 loadWatchlist();
@@ -1120,6 +1644,7 @@ tickClock();
 setInterval(tickClock, 1000);
 setInterval(pollRtorrent, 10000);
 setInterval(pollDaemon, 5000);
+setInterval(calUpdateNowLine, 60000);
 </script>
 <button id="daemon-toggle" onclick="toggleDaemon()">—</button>
 <div id="toast-container"></div>

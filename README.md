@@ -86,7 +86,9 @@ For each entry in `anime.toml`, a coroutine runs concurrently via `asyncio.gathe
 Three resizable panels:
 
 - **Media search** — search AniList by title (anime or manga), view status and next airing info, add to watchlist
-- **Watchlist** — current `anime.toml` entries with submitter tags; click a title to search its torrents; edit submitters and search name inline; deprecate or remove entries
+- **Watchlist / Calendar** — two tabs:
+  - *Watchlist* — current `anime.toml` entries with submitter tags; click a title to search its torrents; edit submitters, search name, save path and check delay inline; deprecate or remove entries
+  - *Calendar* — every tracked show's episodes on a month or week grid (AniList air times, shown in your local timezone), colour-coded per show, with month/week navigation and a Today button; click an episode to search it in the torrent browser
 - **Torrent browser** — search Nyaa by title and optional episode number, filter by HEVC/x265 or torrent type (Trusted/Normal/Remake), sort by any column (resizable), add directly to Transmission
 
 When adding a torrent from the browser, click the show title in the watchlist panel first to set the download folder context — the torrent will be saved to the correct per-title subfolder under `LYDARR_DEFAULT_DIR`. Clearing the search box (✕) resets the context.
