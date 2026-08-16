@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from anilist.search import search as anilist_search, find_by_title
 from anilist.types import MediaType
 from lydarr.file_manager import MediaEntry
-from lydarr.tracker import _safe_dirname
+from lydarr.tracker import DEFAULT_CHECK_DELAY, _safe_dirname
 from lydarr.web.routes.daemon import _daemon_running, spawn_tracker
 
 _logger = logging.getLogger("lydarr.web")
@@ -57,6 +57,8 @@ async def list_media(request: Request):
             "deprecated": e.deprecated,
             "download_dir": e.download_dir,
             "default_path": os.path.join(default_dir, _safe_dirname(e.title)),
+            "check_delay": e.check_delay,
+            "default_check_delay": DEFAULT_CHECK_DELAY,
         }
         for e in request.app.state.anime_state.entries()
     ]
@@ -77,6 +79,7 @@ class SubmittersBody(BaseModel):
     submitters: list[str]
     search_name: str = ""
     download_dir: str = ""
+    check_delay: int = 0
 
 
 @router.post("/anime/add")
@@ -140,7 +143,8 @@ async def update_submitters(body: SubmittersBody, request: Request):
     state = request.app.state.anime_state
     if body.title not in state.titles():
         return {"ok": False, "reason": "not tracked"}
-    await state.update_entry(cfg.anime_file, body.title, body.submitters, body.search_name, body.download_dir)
+    await state.update_entry(cfg.anime_file, body.title, body.submitters, body.search_name,
+                             body.download_dir, max(0, body.check_delay))
     return {"ok": True}
 
 

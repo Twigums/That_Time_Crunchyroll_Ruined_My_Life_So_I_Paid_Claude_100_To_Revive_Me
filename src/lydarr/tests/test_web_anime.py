@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from lydarr.config import AppConfig
 from lydarr.file_manager import MediaEntry, MediaState
+from lydarr.tracker import DEFAULT_CHECK_DELAY
 from lydarr.web.app import create_app
 
 
@@ -178,6 +179,30 @@ def test_update_submitters(tmp_path):
     e = next(e for e in entries if e.title == "Solo Leveling")
     assert e.submitters == ["SubsPlease", "Erai-raws"]
     assert e.search_name == "Solo Leveling S2"
+
+
+def test_update_check_delay(tmp_path):
+    cfg = _make_cfg(tmp_path)
+    state = _make_state([MediaEntry(title = "Solo Leveling", submitters = [])])
+    with TestClient(create_app(cfg, state)) as client:
+        resp = client.post("/api/anime/submitters", json = {
+            "title": "Solo Leveling",
+            "submitters": [],
+            "check_delay": 15,
+        })
+        assert resp.json()["ok"] is True
+        assert state.get("Solo Leveling").check_delay == 15
+
+        listed = client.get("/api/anime/list").json()[0]
+        assert listed["check_delay"] == 15
+        assert listed["default_check_delay"] == DEFAULT_CHECK_DELAY
+
+        client.post("/api/anime/submitters", json = {
+            "title": "Solo Leveling",
+            "submitters": [],
+            "check_delay": -5,
+        })
+        assert state.get("Solo Leveling").check_delay == 0
 
 
 def test_update_submitters_not_tracked(tmp_path):

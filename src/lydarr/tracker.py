@@ -14,6 +14,8 @@ from lydarr.torrent_client import add_magnet, remove_when_done
 
 _WARN_INTERVAL = 48
 
+DEFAULT_CHECK_DELAY = 60  # minutes after air time before searching Nyaa
+
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*\x00]')
 
 _logger = logging.getLogger("lydarr.tracker")
@@ -114,8 +116,9 @@ async def _step_anime(cfg: AppConfig, state: MediaState, entry: MediaEntry) -> b
                 return True
             ep_num = info.next_airing_episode
             air_time = datetime.fromtimestamp(info.next_airing_at, tz = timezone.utc)
-            trigger = air_time + timedelta(hours = 1)
-            _log(name, f"Next ep {_pad(ep_num)} airs at {air_time}. Searching at {trigger}.")
+            delay = entry.check_delay or DEFAULT_CHECK_DELAY
+            trigger = air_time + timedelta(minutes = delay)
+            _log(name, f"Next ep {_pad(ep_num)} airs at {air_time}. Searching at {trigger} (+{delay} min).")
             await _sleep_until(trigger)
             await _wait_and_add_episode(cfg, nyaa_name, ep_num, entry.submitters, download_dir)
             return True

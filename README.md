@@ -24,6 +24,7 @@ title = "TITLE_OF_ANIME"
 type = "anime" # "anime" or "manga"
 search_name = "SEARCH_NAME" # title used to search nyaa with
 submitters = ["SUBMITTER_1", "SUBMITTER_2"] # chosen submitter(s)
+check_delay = 60 # minutes to wait after the episode airs before searching nyaa (default: 60)
 deprecated = true # skipped by daemon
 
 

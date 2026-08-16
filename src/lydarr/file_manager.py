@@ -3,7 +3,7 @@ import asyncio
 import json
 import os
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 
 
@@ -16,6 +16,7 @@ class MediaEntry:
     search_name: str = ""            # overrides title for Nyaa queries if set
     deprecated: bool = False
     download_dir: str = ""           # overrides default_dir as the save base dir if set
+    check_delay: int = 0             # minutes to wait after air time; 0 = tracker default
 
 
 def read_entries(path: str) -> list[MediaEntry]:
@@ -31,6 +32,7 @@ def read_entries(path: str) -> list[MediaEntry]:
                 search_name = m.get("search_name", ""),
                 deprecated = m.get("deprecated", False),
                 download_dir = m.get("download_dir", ""),
+                check_delay = m.get("check_delay", 0),
             )
             for m in data.get("media", [])
         ]
@@ -52,6 +54,8 @@ def _write(path: str, entries: list[MediaEntry]) -> None:
             lines.append(f"search_name = {json.dumps(e.search_name)}")
         if e.download_dir:
             lines.append(f"download_dir = {json.dumps(e.download_dir)}")
+        if e.check_delay:
+            lines.append(f"check_delay = {e.check_delay}")
         if e.media_type == "manga":
             lines.append(f"last_chapter = {e.last_chapter}")
         if e.deprecated:
@@ -91,29 +95,21 @@ class MediaState:
             self._entries = [e for e in self._entries if e.title != title]
             await asyncio.get_event_loop().run_in_executor(None, partial(_write, path, list(self._entries)))
 
-    async def update_entry(self, path: str, title: str, submitters: list[str], search_name: str, download_dir: str = "") -> None:
+    async def _patch(self, path: str, title: str, **changes) -> None:
         async with self._lock:
             self._entries = [
-                MediaEntry(e.title, e.media_type, submitters, e.last_chapter, search_name, e.deprecated, download_dir)
-                if e.title == title else e
+                replace(e, **changes) if e.title == title else e
                 for e in self._entries
             ]
             await asyncio.get_event_loop().run_in_executor(None, partial(_write, path, list(self._entries)))
+
+    async def update_entry(self, path: str, title: str, submitters: list[str], search_name: str,
+                           download_dir: str = "", check_delay: int = 0) -> None:
+        await self._patch(path, title, submitters = submitters, search_name = search_name,
+                          download_dir = download_dir, check_delay = check_delay)
 
     async def set_deprecated(self, path: str, title: str, deprecated: bool) -> None:
-        async with self._lock:
-            self._entries = [
-                MediaEntry(e.title, e.media_type, e.submitters, e.last_chapter, e.search_name, deprecated, e.download_dir)
-                if e.title == title else e
-                for e in self._entries
-            ]
-            await asyncio.get_event_loop().run_in_executor(None, partial(_write, path, list(self._entries)))
+        await self._patch(path, title, deprecated = deprecated)
 
     async def update_last_chapter(self, path: str, title: str, chapter: int) -> None:
-        async with self._lock:
-            self._entries = [
-                MediaEntry(e.title, e.media_type, e.submitters, chapter, e.search_name, e.deprecated, e.download_dir)
-                if e.title == title else e
-                for e in self._entries
-            ]
-            await asyncio.get_event_loop().run_in_executor(None, partial(_write, path, list(self._entries)))
+        await self._patch(path, title, last_chapter = chapter)

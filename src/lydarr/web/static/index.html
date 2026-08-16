@@ -839,12 +839,13 @@ async function loadWatchlist() {
       const tags = e.submitters.map(s => `<span class="sub-tag">${esc(s)}</span>`).join('');
       const subsLabel = e.submitters.length ? tags : '<span class="label-muted" style="font-size:11px">all uploaders</span>';
       const chText = e.type === 'manga' && e.last_chapter > 0 ? `<span class="label-muted" style="font-size:11px">ch.${String(e.last_chapter).padStart(3,'0')} tracked</span>` : '';
+      const delayText = e.type !== 'manga' && e.check_delay ? `<span class="label-muted" style="font-size:11px">+${e.check_delay}m after air</span>` : '';
       if (e.deprecated) {
         return `
       <div class="watchlist-item deprecated" id="wl-item-${i}">
         <div class="info" style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:6px">${typeBadgeHtml}<span class="wl-title-text">${esc(e.title)}</span></div>
-          <div class="wl-subs">${subsLabel}${chText}
+          <div class="wl-subs">${subsLabel}${chText}${delayText}
             <button class="secondary" style="padding:1px 6px;font-size:11px" disabled>✎</button><span id="wl-status-${i}" class="label-muted" style="font-size:11px"></span>
           </div>
         </div>
@@ -856,7 +857,7 @@ async function loadWatchlist() {
       <div class="watchlist-item" id="wl-item-${i}">
         <div class="info" style="flex:1;min-width:0">
           <div style="display:flex;align-items:center;gap:6px">${typeBadgeHtml}<button class="wl-title-btn" data-title="${esc(e.title)}" data-type="${esc(e.type)}" data-searchname="${esc(e.search_name || '')}" onclick="searchFromWatchlist(this)">${esc(e.title)}</button></div>
-          <div class="wl-subs">${subsLabel}${chText}
+          <div class="wl-subs">${subsLabel}${chText}${delayText}
             <button class="secondary" style="padding:1px 6px;font-size:11px" onclick="toggleEditSubs(${i})">✎</button><span id="wl-status-${i}" class="label-muted" style="font-size:11px"></span>
           </div>
           <div id="wl-edit-${i}" style="display:none;flex-direction:column;gap:5px;margin-top:6px">
@@ -872,6 +873,11 @@ async function loadWatchlist() {
               <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">Save path</div>
               <input type="text" id="wl-dir-input-${i}" style="width:100%;font-size:12px" data-default="${esc(e.default_path || '')}" placeholder="${esc(e.default_path || '')}" value="${esc(e.download_dir || e.default_path || '')}">
             </div>
+            ${e.type === 'manga' ? '' : `
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);margin-bottom:3px">Check delay (minutes after air time)</div>
+              <input type="number" min="0" step="1" id="wl-delay-input-${i}" style="width:100%;font-size:12px" data-default="${e.default_check_delay}" placeholder="${e.default_check_delay}" value="${e.check_delay || e.default_check_delay}">
+            </div>`}
             <div style="display:flex;gap:6px">
               <button data-title="${esc(e.title)}" onclick="saveSubs(${i}, this)" style="padding:3px 10px;font-size:12px">Save</button>
               <button class="secondary" onclick="toggleEditSubs(${i})" style="padding:3px 10px;font-size:12px">Cancel</button>
@@ -935,15 +941,20 @@ async function saveSubs(idx, btn) {
   const subInput = document.getElementById('wl-sub-input-' + idx);
   const snInput = document.getElementById('wl-sn-input-' + idx);
   const dirInput = document.getElementById('wl-dir-input-' + idx);
+  const delayInput = document.getElementById('wl-delay-input-' + idx);
   const submitters = subInput.value.split(',').map(s => s.trim()).filter(Boolean);
   const search_name = snInput ? snInput.value.trim() : '';
   let download_dir = dirInput ? dirInput.value.trim() : '';
   if (dirInput && download_dir === (dirInput.dataset.default || '')) download_dir = '';
+  let check_delay = 0;
+  if (delayInput && delayInput.value.trim() !== '' && delayInput.value.trim() !== delayInput.dataset.default) {
+    check_delay = Math.max(0, parseInt(delayInput.value, 10) || 0);
+  }
   try {
     await fetch('/api/anime/submitters', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, submitters, search_name, download_dir }),
+      body: JSON.stringify({ title, submitters, search_name, download_dir, check_delay }),
     });
     toggleEditSubs(idx);
     loadWatchlist();

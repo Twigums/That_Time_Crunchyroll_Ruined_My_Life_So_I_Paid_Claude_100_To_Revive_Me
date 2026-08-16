@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from anilist.types import AnilistMedia, MediaType, MediaStatus
 from lydarr.config import AppConfig
 from lydarr.file_manager import MediaEntry, MediaState
-from lydarr.tracker import _log, _pad, _step_anime, track_media
+from lydarr.tracker import DEFAULT_CHECK_DELAY, _log, _pad, _step_anime, track_media
 
 
 def _make_cfg() -> AppConfig:
@@ -144,6 +144,26 @@ async def test_step_anime_releasing_with_next_episode():
         result = await _step_anime(cfg, state, entry)
 
     assert result is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("check_delay, expected_minutes", [(0, DEFAULT_CHECK_DELAY), (15, 15), (240, 240)])
+async def test_step_anime_releasing_honours_check_delay(check_delay, expected_minutes):
+    cfg = _make_cfg()
+    state = _make_state(["Solo Leveling"])
+    entry = MediaEntry(title = "Solo Leveling", submitters = [], check_delay = check_delay)
+    air_time = datetime.now(tz = timezone.utc) + timedelta(hours = 2)
+    info = _make_info(MediaStatus.RELEASING, next_airing_at = int(air_time.timestamp()),
+                      next_airing_episode = 5)
+
+    with patch("lydarr.tracker.find_by_title", new_callable = AsyncMock, return_value = info), \
+         patch("lydarr.tracker._sleep_until", new_callable = AsyncMock) as mock_sleep_until, \
+         patch("lydarr.tracker._wait_and_add_episode", new_callable = AsyncMock):
+        await _step_anime(cfg, state, entry)
+
+    trigger = mock_sleep_until.call_args.args[0]
+    aired_at = datetime.fromtimestamp(int(air_time.timestamp()), tz = timezone.utc)
+    assert (trigger - aired_at) == timedelta(minutes = expected_minutes)
 
 
 @pytest.mark.asyncio

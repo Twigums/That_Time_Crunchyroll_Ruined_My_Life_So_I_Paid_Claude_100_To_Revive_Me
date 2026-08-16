@@ -109,6 +109,21 @@ def test_write_with_download_dir_roundtrip(tmp_path):
     assert recovered[1].download_dir == ""
 
 
+def test_write_with_check_delay_roundtrip(tmp_path):
+    f = tmp_path / "media.toml"
+    entries = [
+        MediaEntry(title = "Solo Leveling", media_type = "anime", submitters = [], check_delay = 90),
+        MediaEntry(title = "Dan Da Dan", media_type = "anime", submitters = []),
+    ]
+    _write(str(f), entries)
+    content = f.read_text()
+    assert "check_delay = 90" in content
+    assert content.count("check_delay") == 1
+    recovered = read_entries(str(f))
+    assert recovered[0].check_delay == 90
+    assert recovered[1].check_delay == 0
+
+
 def test_media_state_get_found():
     entries = [MediaEntry(title = "Solo Leveling"), MediaEntry(title = "Dan Da Dan")]
     state = MediaState(entries)
@@ -180,6 +195,26 @@ async def test_media_state_update_entry(tmp_path):
     assert e.submitters == ["SubsPlease"]
     assert e.search_name == "Solo Leveling S2"
     assert e.download_dir == "/media/anime"
+
+
+@pytest.mark.asyncio
+async def test_media_state_update_entry_check_delay(tmp_path):
+    f = tmp_path / "media.toml"
+    state = MediaState([MediaEntry(title = "Solo Leveling", submitters = [])])
+    await state.update_entry(str(f), "Solo Leveling", [], "", "", 15)
+    assert state.get("Solo Leveling").check_delay == 15
+    await state.update_entry(str(f), "Solo Leveling", [], "", "", 0)
+    assert state.get("Solo Leveling").check_delay == 0
+
+
+@pytest.mark.asyncio
+async def test_media_state_preserves_check_delay(tmp_path):
+    f = tmp_path / "media.toml"
+    state = MediaState([MediaEntry(title = "Solo Leveling", check_delay = 45)])
+    await state.set_deprecated(str(f), "Solo Leveling", True)
+    assert state.get("Solo Leveling").check_delay == 45
+    await state.update_last_chapter(str(f), "Solo Leveling", 3)
+    assert state.get("Solo Leveling").check_delay == 45
 
 
 @pytest.mark.asyncio
