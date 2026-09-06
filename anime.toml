@@ -1,68 +1,131 @@
 [[media]]
-title = "Dr. STONE SCIENCE FUTURE Cour 3"
-type = "anime"
-submitters = ["SubsPlease"]
-search_name = "Dr. STONE s4"
-download_dir = "/home/dl/copyparty/Jellyfin/Anime/Dr Stone/Season 4"
-
-[[media]]
-title = "Classroom of the Elite 4th Season: Second Year, First Semester"
-type = "anime"
-submitters = ["SubsPlease"]
-search_name = "Youkoso Jitsuryoku Shijou Shugi no Kyoushitsu e S4"
-
-[[media]]
 title = "Welcome to Demon School! Iruma-kun Season 4"
 type = "anime"
 submitters = ["SubsPlease"]
 search_name = "Mairimashita! Iruma-kun S4 1080"
-
-[[media]]
-title = "MARRIAGETOXIN"
-type = "anime"
-submitters = ["SubsPlease"]
-
-[[media]]
-title = "Witch Hat Atelier"
-type = "anime"
-submitters = ["ToonsHub"]
-search_name = "Witch Hat Atelier [ToonsHub] Dual"
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/Welcome to Demon School! Iruma-kun/Season 4"
+check_delay = 120
 
 [[media]]
 title = "That Time I Got Reincarnated as a Slime Season 4"
 type = "anime"
 submitters = ["Erai-raws"]
 search_name = "Tensei Shitara Slime Datta Ken 4"
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/That Time I Got Reincarnated as a Slime/Season 4/"
+check_delay = 90
 
 [[media]]
 title = "Ascendance of a Bookworm: Adopted Daughter of an Archduke"
 type = "anime"
 submitters = ["SubsPlease"]
 search_name = "Honzuki no Gekokujou S4"
-
-[[media]]
-title = "Reborn as a Vending Machine, I Now Wander the Dungeon Season 3"
-type = "anime"
-submitters = ["SubsPlease"]
-search_name = "Jidou Hanbaiki ni Umarekawatta Ore wa Meikyuu wo Samayou S3"
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/Ascendance of a Bookworm Adopted Daughter of an Archduke/Season 4"
+check_delay = 120
 
 [[media]]
 title = "Re:ZERO -Starting Life in Another World- Season 4"
 type = "anime"
 submitters = ["SubsPlease"]
 search_name = "Re:Zero kara Hajimeru Isekai Seikatsu 4th Season 1080"
-
-[[media]]
-title = "Wistoria: Wand and Sword Season 2"
-type = "anime"
-submitters = []
-
-[[media]]
-title = "Gals Can't Be Kind to Otaku!?"
-type = "anime"
-submitters = ["Unfucked"]
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/Re:Zero/Season 4"
 
 [[media]]
 title = "Daemons of the Shadow Realm"
 type = "anime"
 submitters = ["ToonsHub"]
+
+[[media]]
+title = "Smoking Behind the Supermarket with You"
+type = "anime"
+submitters = []
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/Smoking Behind the Supermarket with You/Season 1"
+
+[[media]]
+title = "Saga of Tanya the Evil Season 2"
+type = "anime"
+submitters = ["SubsPlease"]
+search_name = "youjo senki s2"
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/Saga of Tanya the Evil/Season 2/"
+
+[[media]]
+title = "Grand Blue Season 3"
+type = "anime"
+submitters = ["ToonsHub"]
+search_name = "Grand Blue Dreaming S03"
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/Grand Blue Dreaming/Season 3"
+
+[[media]]
+title = "Cyberpunk: Edgerunners 2"
+type = "anime"
+submitters = []
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/Cyberpunk Edgerunners/Season 2"
+
+[[media]]
+title = "Mushoku Tensei: Jobless Reincarnation Season 3"
+type = "anime"
+submitters = ["SubsPlease"]
+search_name = "Mushoku Tensei S3"
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/Mushoku Tensei/Season 3/"
+check_delay = 90
+
+[[media]]
+title = "Trapped in a Dating Sim: The World of Otome Games is Tough for Mobs Season 2"
+type = "anime"
+submitters = ["ToonsHub"]
+search_name = "Trapped in a Dating Sim: The World of Otome Games is Tough for Mobs S02"
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/Trapped in a Dating Sim The World of Otome Games is Tough for Mobs/Season 2"
+
+[[media]]
+title = "Clevatess Season 2"
+type = "anime"
+submitters = ["SubsPlease"]
+search_name = "Clevatess S2"
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/Clevatess/Season 2"
+
+[[media]]
+title = "Chainsmoker Cat"
+type = "anime"
+submitters = []
+search_name = "yani neko"
+
+[[media]]
+title = "I Want to Love You Till Your Dying Day"
+type = "anime"
+submitters = ["SubsPlease"]
+search_name = "Kimi ga Shinu made Koi wo Shitai"
+
+[[media]]
+title = "FX Senshi Kurumi-chan"
+type = "anime"
+submitters = []
+
+[[media]]
+title = "Oh Boy, Was I Wrong About Her"
+type = "anime"
+submitters = ["ToonsHub"]
+search_name = "Oh Boy Was I Wrong About Her"
+
+[[media]]
+title = "HELL MODE: The Hardcore Gamer Dominates in Another World with Garbage Balancing Season 2"
+type = "anime"
+submitters = ["SubsPlease"]
+search_name = "HELL MODE S2"
+download_dir = "/home/dl/copyparty/Jellyfin/Anime/HELL MODE/Season 2/"
+
+[[media]]
+title = "Though I Am an Inept Villainess"
+type = "anime"
+submitters = ["ToonsHub"]
+check_delay = 120
+
+[[media]]
+title = "Love Unseen Beneath the Clear Night Sky"
+type = "anime"
+submitters = []
+
+[[media]]
+title = "The Frontier Lord Begins with Zero Subjects"
+type = "anime"
+submitters = []
+search_name = "ryoumin 0-nin start no henkyou ryoushu-sama"
+check_delay = 120

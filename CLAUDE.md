@@ -120,6 +120,8 @@ Read with stdlib `tomllib`; written with a minimal custom serialiser (no extra d
 | `LYDARR_WEB` | unset | Set to `1` to enable web UI alongside daemon |
 | `LYDARR_WEB_HOST` | `0.0.0.0` | Web UI bind address (overridden by `--host`) |
 | `LYDARR_WEB_PORT` | `8080` | Web UI port (overridden by `--port`) |
+| `LYDARR_TRANSMISSION_UNIT` | `transmission-daemon` | systemd unit the Start/Stop buttons control |
+| `LYDARR_TRANSMISSION_SCOPE` | `user` | `user` → `systemctl --user` (injects `XDG_RUNTIME_DIR` so it works outside a login session); `system` → `sudo -n systemctl` |
 
 ---
 

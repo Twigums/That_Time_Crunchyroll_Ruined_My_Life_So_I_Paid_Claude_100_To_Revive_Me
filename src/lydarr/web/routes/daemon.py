@@ -1,6 +1,7 @@
 """Daemon control and Transmission status routes."""
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
@@ -27,6 +28,31 @@ def spawn_tracker(app, entry) -> None:
     task = asyncio.create_task(track_media(app.state.cfg, app.state.anime_state, entry))
     app.state.tracker_tasks.add(task)
     task.add_done_callback(app.state.tracker_tasks.discard)
+
+
+SERVICE_UNIT = os.environ.get("LYDARR_TRANSMISSION_UNIT", "transmission-daemon")
+SERVICE_SCOPE = os.environ.get("LYDARR_TRANSMISSION_SCOPE", "user")
+
+
+async def _systemctl(action: str) -> tuple[int, str]:
+    env = dict(os.environ)
+    if SERVICE_SCOPE == "user":
+        cmd = ["systemctl", "--user", action, SERVICE_UNIT]
+        # systemd --user needs a session bus; absent when lydarr runs outside a login session
+        env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
+    else:
+        cmd = ["sudo", "-n", "systemctl", action, SERVICE_UNIT]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout = asyncio.subprocess.DEVNULL,
+            stderr = asyncio.subprocess.PIPE,
+            env = env,
+        )
+    except FileNotFoundError:
+        return 127, f"{cmd[0]} not found"
+    _, stderr = await proc.communicate()
+    return proc.returncode or 0, stderr.decode(errors = "replace").strip()
 
 
 @router.get("/daemon/status")
@@ -85,16 +111,10 @@ async def transmission_stop(request: Request):
     cfg = request.app.state.cfg
     if not await is_client_up(cfg.transmission_url, cfg.transmission_user, cfg.transmission_pass):
         return {"ok": True, "stopped": False}
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "systemctl", "--user", "stop", "transmission-daemon",
-            stdout = asyncio.subprocess.DEVNULL,
-            stderr = asyncio.subprocess.DEVNULL,
-        )
-        asyncio.create_task(proc.wait())
-    except Exception as exc:
-        _log.error("transmission stop failed: %s", exc)
-        return {"ok": False, "reason": "internal error"}
+    rc, err = await _systemctl("stop")
+    if rc != 0:
+        _log.error("transmission stop failed (rc=%d): %s", rc, err)
+        return {"ok": False, "reason": err or "systemctl stop failed"}
     for _ in range(20):
         await asyncio.sleep(1)
         if not await is_client_up(cfg.transmission_url, cfg.transmission_user, cfg.transmission_pass):
@@ -109,18 +129,10 @@ async def transmission_start(request: Request):
     cfg = request.app.state.cfg
     if await is_client_up(cfg.transmission_url, cfg.transmission_user, cfg.transmission_pass):
         return {"ok": True, "started": False}
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "systemctl", "--user", "start", "transmission-daemon",
-            stdout = asyncio.subprocess.DEVNULL,
-            stderr = asyncio.subprocess.DEVNULL,
-        )
-        asyncio.create_task(proc.wait())
-    except FileNotFoundError:
-        return {"ok": False, "reason": "systemctl not found"}
-    except Exception as exc:
-        _log.error("transmission start failed: %s", exc)
-        return {"ok": False, "reason": "internal error"}
+    rc, err = await _systemctl("start")
+    if rc != 0:
+        _log.error("transmission start failed (rc=%d): %s", rc, err)
+        return {"ok": False, "reason": err or "systemctl start failed"}
     for _ in range(25):
         await asyncio.sleep(1)
         if await is_client_up(cfg.transmission_url, cfg.transmission_user, cfg.transmission_pass):
