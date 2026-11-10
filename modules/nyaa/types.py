@@ -2,6 +2,8 @@
 from dataclasses import dataclass, field
 from enum import Enum
 
+from nyaa.parser._utils import magnet_hash, parse_timestamp
+
 
 class TorrentSite(Enum):
     NYAA_SI = "nyaa.si"
@@ -46,6 +48,14 @@ class Torrent:
     leechers: int
     completed: int | None
     type: TorrentType
+
+    @property
+    def published(self) -> int | None:
+        return parse_timestamp(self.date)
+
+    @property
+    def info_hash(self) -> str:
+        return magnet_hash(self.magnet)
 
 
 @dataclass(frozen = True)
