@@ -8,8 +8,8 @@ URL = "http://localhost:9091/transmission/rpc"
 USER = None
 PASS = None
 
-RPC_SUCCESS = {"result": "success", "arguments": {}}
-RPC_DUPLICATE = {"result": "duplicate torrent", "arguments": {}}
+RPC_SUCCESS = {"result": "success", "arguments": {"torrent-added": {"id": 7}}}
+RPC_DUPLICATE = {"result": "duplicate torrent", "arguments": {"torrent-duplicate": {"id": 7}}}
 RPC_FAILURE = {"result": "no such torrent", "arguments": {}}
 RPC_HEALTH = {"result": "success", "arguments": {"torrents": []}}
 
@@ -152,7 +152,7 @@ async def test_add_magnet_success():
     with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock, return_value = ok_response):
         result = await add_magnet(URL, USER, PASS, "magnet:?xt=urn:btih:HASH")
 
-    assert result is True
+    assert result == 7
 
 
 @pytest.mark.asyncio
@@ -162,7 +162,7 @@ async def test_add_magnet_duplicate_is_success():
     with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock, return_value = dup_response):
         result = await add_magnet(URL, USER, PASS, "magnet:?xt=urn:btih:HASH")
 
-    assert result is True
+    assert result == 7
 
 
 @pytest.mark.asyncio
@@ -172,7 +172,7 @@ async def test_add_magnet_failure():
     with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock, return_value = fail_response):
         result = await add_magnet(URL, USER, PASS, "magnet:?xt=urn:btih:HASH")
 
-    assert result is False
+    assert result is None
 
 
 @pytest.mark.asyncio
@@ -182,15 +182,15 @@ async def test_add_magnet_non_200_status():
     with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock, return_value = bad_response):
         result = await add_magnet(URL, USER, PASS, "magnet:?xt=urn:btih:HASH")
 
-    assert result is False
+    assert result is None
 
 
 @pytest.mark.asyncio
-async def test_add_magnet_exception_returns_false():
+async def test_add_magnet_exception_returns_none():
     with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock, side_effect = Exception("Error")):
         result = await add_magnet(URL, USER, PASS, "magnet:?xt=urn:btih:HASH")
 
-    assert result is False
+    assert result is None
 
 
 @pytest.mark.asyncio

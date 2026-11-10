@@ -143,7 +143,7 @@ def test_add_torrent_failure(tmp_path):
     cfg = _make_cfg(tmp_path)
     state = MediaState([])
 
-    with patch("lydarr.web.routes.torrents.add_magnet", new_callable = AsyncMock, return_value = False):
+    with patch("lydarr.web.routes.torrents.add_magnet", new_callable = AsyncMock, return_value = None):
         with TestClient(create_app(cfg, state)) as client:
             resp = client.post(
                 "/api/torrents/add",

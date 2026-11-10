@@ -45,10 +45,10 @@ def _make_info(
     )
 
 
-def test_log_prints(capsys):
-    _log("Solo Leveling", "Test message")
-    captured = capsys.readouterr()
-    assert "[Solo Leveling] Test message" in captured.out
+def test_log_emits_tagged_message(caplog):
+    with caplog.at_level("INFO", logger = "lydarr.tracker"):
+        _log("Solo Leveling", "Test message")
+    assert "[Solo Leveling] Test message" in caplog.text
 
 
 def test_pad():
