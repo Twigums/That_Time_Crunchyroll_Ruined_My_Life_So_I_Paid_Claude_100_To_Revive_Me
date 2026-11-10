@@ -1,5 +1,5 @@
 """AniList GraphQL API domain types."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -29,9 +29,24 @@ class AnilistMedia:
     next_airing_at: int | None
     next_airing_episode: int | None
     cover_image: str | None = None
+    title_native: str | None = None
+    synonyms: list[str] = field(default_factory = list)
+    format: str | None = None
+    duration: int | None = None
 
     def display_title(self) -> str:
         return self.title_english or self.title_romaji or f"ID:{self.id}"
+
+    def titles(self) -> list[str]:
+        """Every Latin-script name the show goes by, most canonical first."""
+        seen: set[str] = set()
+        out: list[str] = []
+        for name in (self.title_romaji, self.title_english, *self.synonyms):
+            key = (name or "").strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                out.append((name or "").strip())
+        return out
 
 
 @dataclass(frozen = True)
@@ -43,4 +58,14 @@ class AiringEpisode:
 
 
 class AnilistError(Exception):
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class AnilistRateLimited(AnilistError):
+    pass
+
+
+class AnilistUnavailable(AnilistError):
     pass

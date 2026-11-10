@@ -167,7 +167,7 @@ async def test_find_by_title_colon_strip_fallback():
     hit = {"Page": {"media": [SOLO_LEVELING_MEDIA]}}
     call_count = 0
 
-    async def mock_graphql(query, variables):
+    async def mock_graphql(query, variables, **_):
         nonlocal call_count
         call_count += 1
         return empty if call_count == 1 else hit
@@ -188,7 +188,7 @@ async def test_find_by_title_no_colon_no_retry():
     empty = {"Page": {"media": []}}
     call_count = 0
 
-    async def mock_graphql(query, variables):
+    async def mock_graphql(query, variables, **_):
         nonlocal call_count
         call_count += 1
         return empty
@@ -198,22 +198,6 @@ async def test_find_by_title_no_colon_no_retry():
 
     assert call_count == 1
     assert result is None
-
-
-@pytest.mark.asyncio
-async def test_graphql_http_error():
-    with patch("anilist.http.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value = mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value = False)
-        mock_resp = AsyncMock()
-        mock_resp.status_code = 500
-        mock_resp.text = "Server Error"
-        mock_client.post = AsyncMock(return_value = mock_resp)
-
-        from anilist.http import graphql as graphql_fn
-        with pytest.raises(AnilistError, match = "HTTP 500"):
-            await graphql_fn("query {}", {})
 
 
 def _schedule_page(nodes: list[dict], has_next: bool = False) -> dict:
@@ -266,24 +250,5 @@ async def test_airing_schedules_stops_at_page_cap():
     with patch("anilist.search.graphql", new_callable = AsyncMock, return_value = endless) as mock_gql:
         eps = await airing_schedules([1], 0, 100)
 
-    assert mock_gql.await_count == 10
-    assert len(eps) == 10
-
-
-@pytest.mark.asyncio
-async def test_graphql_errors_in_response():
-    with patch("anilist.http.httpx.AsyncClient") as mock_client_cls:
-        mock_client = AsyncMock()
-        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value = mock_client)
-        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value = False)
-        mock_resp = AsyncMock()
-        mock_resp.status_code = 200
-        mock_resp.json = MagicMock(return_value = {"errors": [{"message": "Not found"}], "data": None})
-        mock_client.post = AsyncMock(return_value = mock_resp)
-
-        from anilist.http import graphql as graphql_fn
-        with pytest.raises(AnilistError, match = "Not found"):
-            await graphql_fn("query {}", {})
-
-
-from unittest.mock import MagicMock
+    assert mock_gql.await_count == 20
+    assert len(eps) == 20

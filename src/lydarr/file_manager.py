@@ -17,27 +17,39 @@ class MediaEntry:
     deprecated: bool = False
     download_dir: str = ""           # overrides default_dir as the save base dir if set
     check_delay: int = 0             # minutes to wait after air time; 0 = tracker default
+    anilist_id: int = 0              # 0 = not resolved yet; filled in on first lookup
+    episode_offset: int = 0          # added to AniList's episode number to get the release number; 0 = detect
+
+
+class WatchlistError(Exception):
+    pass
 
 
 def read_entries(path: str) -> list[MediaEntry]:
     try:
         with open(path, "rb") as f:
             data = tomllib.load(f)
-        return [
-            MediaEntry(
-                title = m["title"],
-                media_type = m.get("type", "anime"),
-                submitters = m.get("submitters", []),
-                last_chapter = m.get("last_chapter", 0),
-                search_name = m.get("search_name", ""),
-                deprecated = m.get("deprecated", False),
-                download_dir = m.get("download_dir", ""),
-                check_delay = m.get("check_delay", 0),
-            )
-            for m in data.get("media", [])
-        ]
     except FileNotFoundError:
         return []
+    except tomllib.TOMLDecodeError as exc:
+        raise WatchlistError(f"{path} is not valid TOML: {exc}") from exc
+    entries = []
+    for index, m in enumerate(data.get("media", []), start = 1):
+        if not m.get("title"):
+            raise WatchlistError(f"{path}: [[media]] block #{index} has no title")
+        entries.append(MediaEntry(
+            title = m["title"],
+            media_type = m.get("type", "anime"),
+            submitters = m.get("submitters", []),
+            last_chapter = m.get("last_chapter", 0),
+            search_name = m.get("search_name", ""),
+            deprecated = m.get("deprecated", False),
+            download_dir = m.get("download_dir", ""),
+            check_delay = m.get("check_delay", 0),
+            anilist_id = m.get("anilist_id", 0),
+            episode_offset = m.get("episode_offset", 0),
+        ))
+    return entries
 
 
 def _write(path: str, entries: list[MediaEntry]) -> None:
@@ -48,14 +60,18 @@ def _write(path: str, entries: list[MediaEntry]) -> None:
             "[[media]]",
             f"title = {json.dumps(e.title)}",
             f"type = {json.dumps(e.media_type)}",
-            f"submitters = [{subs}]",
         ]
+        if e.anilist_id:
+            lines.append(f"anilist_id = {e.anilist_id}")
+        lines.append(f"submitters = [{subs}]")
         if e.search_name:
             lines.append(f"search_name = {json.dumps(e.search_name)}")
         if e.download_dir:
             lines.append(f"download_dir = {json.dumps(e.download_dir)}")
         if e.check_delay:
             lines.append(f"check_delay = {e.check_delay}")
+        if e.episode_offset:
+            lines.append(f"episode_offset = {e.episode_offset}")
         if e.media_type == "manga":
             lines.append(f"last_chapter = {e.last_chapter}")
         if e.deprecated:
@@ -84,16 +100,19 @@ class MediaState:
     def active_titles(self) -> list[str]:
         return [e.title for e in self._entries if not e.deprecated]
 
+    async def _save(self, path: str) -> None:
+        await asyncio.get_running_loop().run_in_executor(None, partial(_write, path, list(self._entries)))
+
     async def add(self, path: str, entry: MediaEntry) -> None:
         async with self._lock:
             if not any(e.title == entry.title for e in self._entries):
                 self._entries.append(entry)
-            await asyncio.get_event_loop().run_in_executor(None, partial(_write, path, list(self._entries)))
+            await self._save(path)
 
     async def remove(self, path: str, title: str) -> None:
         async with self._lock:
             self._entries = [e for e in self._entries if e.title != title]
-            await asyncio.get_event_loop().run_in_executor(None, partial(_write, path, list(self._entries)))
+            await self._save(path)
 
     async def _patch(self, path: str, title: str, **changes) -> None:
         async with self._lock:
@@ -101,15 +120,19 @@ class MediaState:
                 replace(e, **changes) if e.title == title else e
                 for e in self._entries
             ]
-            await asyncio.get_event_loop().run_in_executor(None, partial(_write, path, list(self._entries)))
+            await self._save(path)
 
     async def update_entry(self, path: str, title: str, submitters: list[str], search_name: str,
-                           download_dir: str = "", check_delay: int = 0) -> None:
+                           download_dir: str = "", check_delay: int = 0, episode_offset: int = 0) -> None:
         await self._patch(path, title, submitters = submitters, search_name = search_name,
-                          download_dir = download_dir, check_delay = check_delay)
+                          download_dir = download_dir, check_delay = check_delay,
+                          episode_offset = episode_offset)
 
     async def set_deprecated(self, path: str, title: str, deprecated: bool) -> None:
         await self._patch(path, title, deprecated = deprecated)
 
     async def update_last_chapter(self, path: str, title: str, chapter: int) -> None:
         await self._patch(path, title, last_chapter = chapter)
+
+    async def set_anilist_id(self, path: str, title: str, anilist_id: int) -> None:
+        await self._patch(path, title, anilist_id = anilist_id)
