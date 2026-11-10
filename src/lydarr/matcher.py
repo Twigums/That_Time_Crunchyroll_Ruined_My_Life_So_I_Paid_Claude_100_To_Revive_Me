@@ -37,6 +37,7 @@ class Policy:
 class Target:
     episode: int
     airing_at: int | None = None
+    next_airing_at: int | None = None
     due_at: float | None = None
     names: tuple[str, ...] = ()
     search_name: str = ""
@@ -170,6 +171,20 @@ def _offset_for(release: Release, target: Target) -> int | None:
     return None
 
 
+def in_episode_window(target: Target, published: int | None) -> bool:
+    """False once an upload is recent enough to belong to the following episode instead."""
+    if published is None or target.next_airing_at is None:
+        return True
+    return published < target.next_airing_at - EARLY_TOLERANCE
+
+
+def fits(release: Release, target: Target) -> int | None:
+    """Numbering offset if this release could be the target episode, ignoring dates and timing."""
+    if release.batch or release.episode is None or not _title_ok(release, target):
+        return None
+    return _offset_for(release, target)
+
+
 def _listed_index(release: Release, submitters: tuple[str, ...]) -> int | None:
     wanted = [group_key(s) for s in submitters]
     group = group_key(release.group)
@@ -249,7 +264,9 @@ def evaluate(target: Target, torrents: list[Torrent], now: float, policy: Policy
             c.reason = "no episode number"
         else:
             offset = _offset_for(release, target)
-            if offset is None:
+            if offset is None and not in_episode_window(target, published):
+                c.reason = "a later episode"
+            elif offset is None:
                 c.verdict = NEAR
                 c.reason = _number_note(release, target)
             else:
