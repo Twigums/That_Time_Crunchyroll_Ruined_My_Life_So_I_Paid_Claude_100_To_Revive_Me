@@ -57,26 +57,36 @@ async def search_torrents(
     lookup and labels every result with its verdict, so the browser shows
     exactly what the tracker would pick and why.
     """
+    tracker = request.app.state.tracker
     bound = request.app.state.anime_state.get(entry) if entry else None
     torrent_site = _SITE_MAP.get(site, TorrentSite.NYAA_SI)
     query = q.strip()
+    is_anime_entry = bound is not None and bound.media_type != "manga"
+    # The box is prefilled with the entry's own name. Left untouched, search the way the
+    # tracker does (romaji and season-less titles) rather than by that literal text.
+    untouched = is_anime_entry and query in ("", bound.search_name, bound.title)
 
-    if bound is not None and bound.media_type != "manga" and ep is not None and torrent_site == TorrentSite.NYAA_SI:
-        result = await request.app.state.tracker.preview(bound, ep, query = query or None)
+    if is_anime_entry and ep is not None and torrent_site == TorrentSite.NYAA_SI:
+        result = await tracker.preview(bound, ep, query = None if untouched else query)
         return {
             "judged": True,
             "episode": ep,
             "results": [_row(c.torrent, c.release, c.verdict, c.reason) for c in result.ordered()],
         }
 
-    if ep is not None:
-        query = f"{query} {ep:02d}"
+    queries = tracker.queries(bound) if untouched else [query]
     is_manga = bound.media_type == "manga" if bound is not None else kind == "manga"
-    if torrent_site == TorrentSite.SUKEBEI_NYAA_SI:
-        params = SearchParams(keyword = query, filters = 0, sort = SortField.SEEDERS, order = SortOrder.DESC)
-    else:
-        params = manga_params(query) if is_manga else anime_params(query)
-    results = await nyaa_search(torrent_site, params)
+    found: dict[str, Torrent] = {}
+    for text in queries:
+        if ep is not None:
+            text = f"{text} {ep:02d}"
+        if torrent_site == TorrentSite.SUKEBEI_NYAA_SI:
+            params = SearchParams(keyword = text, filters = 0, sort = SortField.SEEDERS, order = SortOrder.DESC)
+        else:
+            params = manga_params(text) if is_manga else anime_params(text)
+        for t in await nyaa_search(torrent_site, params):
+            found.setdefault(t.id, t)
+    results = sorted(found.values(), key = lambda t: -t.seeders)
     return {"judged": False, "episode": ep, "results": [_row(t) for t in results]}
 
 

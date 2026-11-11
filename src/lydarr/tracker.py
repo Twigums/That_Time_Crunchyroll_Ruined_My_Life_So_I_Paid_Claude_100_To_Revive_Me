@@ -231,6 +231,10 @@ class Tracker:
             require_season_proof = airing_at is None and bool(prequels),
         )
 
+    def queries(self, entry: MediaEntry) -> list[str]:
+        """The Nyaa queries used to find this entry's releases."""
+        return self._queries(entry, self.store.info(entry))
+
     def _queries(self, entry: MediaEntry, info: AnilistMedia | None) -> list[str]:
         if entry.search_name:
             return [entry.search_name]
