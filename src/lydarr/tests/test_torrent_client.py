@@ -1,15 +1,18 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
-from lydarr.torrent_client import is_client_up, wait_for_client, add_magnet, _rpc
+from lydarr.torrent_client import (
+    AddedTorrent, _rpc, add_magnet, is_client_up, remove_torrents, torrent_progress, wait_for_client,
+)
 
 
-URL = "http://localhost:9091/transmission/rpc"
+URL = "http://transmission.invalid/rpc"
 USER = None
 PASS = None
 
-RPC_SUCCESS = {"result": "success", "arguments": {"torrent-added": {"id": 7}}}
-RPC_DUPLICATE = {"result": "duplicate torrent", "arguments": {"torrent-duplicate": {"id": 7}}}
+_ADDED = {"id": 7, "hashString": "ABCDEF0123", "name": "Show - 01"}
+RPC_SUCCESS = {"result": "success", "arguments": {"torrent-added": _ADDED}}
+RPC_DUPLICATE = {"result": "duplicate torrent", "arguments": {"torrent-duplicate": _ADDED}}
 RPC_FAILURE = {"result": "no such torrent", "arguments": {}}
 RPC_HEALTH = {"result": "success", "arguments": {"torrents": []}}
 
@@ -152,7 +155,7 @@ async def test_add_magnet_success():
     with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock, return_value = ok_response):
         result = await add_magnet(URL, USER, PASS, "magnet:?xt=urn:btih:HASH")
 
-    assert result == 7
+    assert result == AddedTorrent(id = 7, hash = "abcdef0123", name = "Show - 01", duplicate = False)
 
 
 @pytest.mark.asyncio
@@ -162,7 +165,56 @@ async def test_add_magnet_duplicate_is_success():
     with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock, return_value = dup_response):
         result = await add_magnet(URL, USER, PASS, "magnet:?xt=urn:btih:HASH")
 
-    assert result == 7
+    assert result.duplicate is True
+    assert result.hash == "abcdef0123"
+
+
+@pytest.mark.asyncio
+async def test_add_magnet_without_torrent_details_is_a_failure():
+    bare = _mock_response(200, {"result": "success", "arguments": {}})
+    with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock, return_value = bare):
+        assert await add_magnet(URL, USER, PASS, "magnet:?xt=urn:btih:HASH") is None
+
+
+@pytest.mark.asyncio
+async def test_progress_is_keyed_by_hash_not_session_id():
+    body = {"arguments": {"torrents": [
+        {"hashString": "AAA", "percentDone": 1},
+        {"hashString": "bbb", "percentDone": 0.25},
+    ]}}
+    with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock,
+               return_value = _mock_response(200, body)) as rpc:
+        progress = await torrent_progress(URL, USER, PASS, ["aaa", "bbb", "ccc"])
+
+    assert progress == {"aaa": 1.0, "bbb": 0.25}
+    method, arguments = rpc.await_args.args[3], rpc.await_args.args[4]
+    assert method == "torrent-get"
+    assert arguments["ids"] == ["aaa", "bbb", "ccc"]
+
+
+@pytest.mark.asyncio
+async def test_progress_is_none_when_transmission_is_unreachable():
+    with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock, side_effect = httpx.ConnectError("down")):
+        assert await torrent_progress(URL, USER, PASS, ["aaa"]) is None
+    with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock) as rpc:
+        assert await torrent_progress(URL, USER, PASS, []) == {}
+        rpc.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_remove_keeps_the_downloaded_files():
+    with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock,
+               return_value = _mock_response(200, {"result": "success"})) as rpc:
+        assert await remove_torrents(URL, USER, PASS, ["aaa"]) is True
+
+    assert rpc.await_args.args[3] == "torrent-remove"
+    assert rpc.await_args.args[4] == {"ids": ["aaa"], "delete-local-data": False}
+
+
+@pytest.mark.asyncio
+async def test_remove_reports_failure():
+    with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock, side_effect = httpx.ConnectError("down")):
+        assert await remove_torrents(URL, USER, PASS, ["aaa"]) is False
 
 
 @pytest.mark.asyncio

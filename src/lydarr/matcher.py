@@ -48,6 +48,9 @@ class Target:
     extra_offsets: frozenset[int] = frozenset()
     submitters: tuple[str, ...] = ()
     check_dates: bool = True
+    # Without an air date the upload-time gate cannot tell seasons apart, so a
+    # sequel must not accept an unlabelled, season-relative number.
+    require_season_proof: bool = False
 
 
 @dataclass
@@ -160,7 +163,7 @@ def _offset_for(release: Release, target: Target) -> int | None:
                 return offset
             continue
         if season is None:
-            if offset in cumulative:
+            if offset in cumulative and not (target.require_season_proof and offset == 0):
                 return offset
         elif season in target.seasons:
             if offset in cumulative:

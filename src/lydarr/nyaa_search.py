@@ -1,4 +1,4 @@
-"""Nyaa.si episode and chapter search helpers."""
+"""Nyaa.si lookups for the tracker: candidate retrieval for episodes, chapter search for manga."""
 import re
 from collections.abc import Callable
 
@@ -12,13 +12,24 @@ _QUERY_OPERATORS = re.compile(r"[\"|()\[\]{}!?:;,~*]")
 _LEADING_HYPHENS = re.compile(r"(?<!\S)-+")
 
 
-def _anime_params(query: str, sort: SortField = SortField.SEEDERS) -> SearchParams:
+def anime_params(query: str, sort: SortField = SortField.SEEDERS) -> SearchParams:
     return SearchParams(
         keyword = query,
         filters = 0,
         category = 1,
         subcategory = 2,
         sort = sort,
+        order = SortOrder.DESC,
+    )
+
+
+def manga_params(query: str) -> SearchParams:
+    return SearchParams(
+        keyword = query,
+        filters = 0,
+        category = 3,
+        subcategory = 1,
+        sort = SortField.SEEDERS,
         order = SortOrder.DESC,
     )
 
@@ -40,41 +51,27 @@ def _reaches_back(latest: list[Torrent], airing_at: int | None) -> bool:
     return bool(stamps) and min(stamps) <= airing_at - EARLY_TOLERANCE
 
 
-async def find_candidates(query: str, numbers: list[int], airing_at: int | None) -> list[Torrent]:
+async def find_candidates(query: str, numbers: list[int], airing_at: int | None,
+                          listings: dict[str, list[Torrent]] | None = None) -> list[Torrent]:
     """Torrents that could be one episode of a show, for the matcher to judge.
 
     Normally a single request: the newest uploads for the show's name. Only when
     that listing no longer reaches back to the air date (catching up on an old
-    episode) are the specific episode numbers searched as well.
+    episode) are the specific episode numbers searched as well. `listings` lets a
+    caller checking several episodes of one show reuse the newest-uploads request.
     """
-    latest = await search(TorrentSite.NYAA_SI, _anime_params(query, SortField.ID))
+    if listings is not None and query in listings:
+        latest = listings[query]
+    else:
+        latest = await search(TorrentSite.NYAA_SI, anime_params(query, SortField.ID))
+        if listings is not None:
+            listings[query] = latest
     found = {t.info_hash or t.id: t for t in latest}
     if not _reaches_back(latest, airing_at):
         for number in numbers:
-            for t in await search(TorrentSite.NYAA_SI, _anime_params(f"{query} {number:02d}")):
+            for t in await search(TorrentSite.NYAA_SI, anime_params(f"{query} {number:02d}")):
                 found.setdefault(t.info_hash or t.id, t)
     return list(found.values())
-
-
-def _manga_params(query: str) -> SearchParams:
-    return SearchParams(
-        keyword = query,
-        filters = 0,
-        category = 3,
-        subcategory = 1,
-        sort = SortField.SEEDERS,
-        order = SortOrder.DESC,
-    )
-
-
-def is_hevc(name: str) -> bool:
-    lower = name.lower()
-    return "hevc" in lower or "x265" in lower
-
-
-def prefer_hevc(torrents: list[Torrent]) -> list[Torrent]:
-    hevc = [t for t in torrents if is_hevc(t.name)]
-    return hevc if hevc else torrents
 
 
 def filter_submitters(torrents: list[Torrent], submitters: list[str]) -> list[Torrent]:
@@ -96,30 +93,14 @@ async def _try_queries(queries: list[str], params_fn: Callable[[str], SearchPara
     return []
 
 
-async def search_episode(name: str, ep_num: int, submitters: list[str] | None = None) -> str | None:
-    pad2 = f"{ep_num:02d}"
-    pad3 = f"{ep_num:03d}"
-    queries = [
-        f"{name} - {pad2}",
-        f"{name} - {pad3}",
-        f"{name} {pad2}",
-        f"{name} {pad3}",
-    ]
-    results = await _try_queries(queries, _anime_params)
-    results = filter_submitters(results, submitters or [])
-    preferred = prefer_hevc(results)
-    return preferred[0].magnet if preferred else None
-
-
-async def search_chapter(name: str, chapter_num: int, submitters: list[str] | None = None) -> str | None:
+async def search_chapter(name: str, chapter_num: int, submitters: list[str] | None = None) -> Torrent | None:
     pad3 = f"{chapter_num:03d}"
     pad2 = f"{chapter_num:02d}"
     queries = [
-        f"{name} - Chapter {pad3}",
         f"{name} Chapter {pad3}",
         f"{name} {pad3}",
         f"{name} Chapter {pad2}",
     ]
-    results = await _try_queries(queries, _manga_params)
-    results = filter_submitters(results, submitters or [])
-    return results[0].magnet if results else None
+    results = await _try_queries(queries, manga_params)
+    results = [t for t in filter_submitters(results, submitters or []) if t.magnet]
+    return results[0] if results else None

@@ -1,20 +1,15 @@
 """Torrent search and add routes."""
-import asyncio
-import logging
-import os
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, field_validator
 
+from lydarr.nyaa_search import anime_params, manga_params
+from lydarr.release import Release, parse_release
 from nyaa.search import search as nyaa_search
-from nyaa.types import SearchParams, SortField, SortOrder, TorrentSite
-from lydarr.nyaa_search import prefer_hevc
-from lydarr.torrent_client import add_magnet, remove_when_done
-from lydarr.tracker import _safe_dirname
+from nyaa.types import SearchParams, SortField, SortOrder, Torrent, TorrentSite
 
 router = APIRouter(prefix = "/api")
-
-_log = logging.getLogger(__name__)
 
 _SITE_MAP: dict[str, TorrentSite] = {
     "nyaa_si": TorrentSite.NYAA_SI,
@@ -23,45 +18,74 @@ _SITE_MAP: dict[str, TorrentSite] = {
 }
 
 
+def _row(t: Torrent, release: Release | None = None, verdict: str | None = None, reason: str | None = None) -> dict:
+    r = release or parse_release(t.name)
+    return {
+        "id": t.id,
+        "name": t.name,
+        "size": t.size,
+        "date": t.date,
+        "published": t.published,
+        "seeders": t.seeders,
+        "leechers": t.leechers,
+        "type": t.type.value,
+        "magnet": t.magnet,
+        "download_url": t.download_url,
+        "group": r.group,
+        "season": r.season,
+        "episode": r.episode,
+        "resolution": r.resolution,
+        "hevc": r.hevc,
+        "batch": r.batch,
+        "verdict": verdict,
+        "reason": reason,
+    }
+
+
 @router.get("/torrents/search")
 async def search_torrents(
+    request: Request,
     q: str,
     ep: int | None = None,
     site: str = "nyaa_si",
-    hevc_only: bool = False,
+    entry: str | None = None,
+    kind: str = "anime",
 ):
-    query = f"{q} - {ep:02d}" if ep is not None else q
+    """Search Nyaa.
+
+    With a watchlist entry and an episode number this runs the tracker's own
+    lookup and labels every result with its verdict, so the browser shows
+    exactly what the tracker would pick and why.
+    """
+    bound = request.app.state.anime_state.get(entry) if entry else None
     torrent_site = _SITE_MAP.get(site, TorrentSite.NYAA_SI)
-    params = SearchParams(
-        keyword = query,
-        filters = 0,
-        category = 1,
-        subcategory = 2,
-        sort = SortField.SEEDERS,
-        order = SortOrder.DESC,
-    )
-    results = await nyaa_search(torrent_site, params)
-    if hevc_only:
-        results = prefer_hevc(results)
-    return [
-        {
-            "id": t.id,
-            "name": t.name,
-            "size": t.size,
-            "date": t.date,
-            "seeders": t.seeders,
-            "leechers": t.leechers,
-            "type": t.type.value,
-            "magnet": t.magnet,
-            "download_url": t.download_url,
+    query = q.strip()
+
+    if bound is not None and bound.media_type != "manga" and ep is not None and torrent_site == TorrentSite.NYAA_SI:
+        result = await request.app.state.tracker.preview(bound, ep, query = query or None)
+        return {
+            "judged": True,
+            "episode": ep,
+            "results": [_row(c.torrent, c.release, c.verdict, c.reason) for c in result.ordered()],
         }
-        for t in results
-    ]
+
+    if ep is not None:
+        query = f"{query} {ep:02d}"
+    is_manga = bound.media_type == "manga" if bound is not None else kind == "manga"
+    if torrent_site == TorrentSite.SUKEBEI_NYAA_SI:
+        params = SearchParams(keyword = query, filters = 0, sort = SortField.SEEDERS, order = SortOrder.DESC)
+    else:
+        params = manga_params(query) if is_manga else anime_params(query)
+    results = await nyaa_search(torrent_site, params)
+    return {"judged": False, "episode": ep, "results": [_row(t) for t in results]}
 
 
 class AddMagnetBody(BaseModel):
     magnet: str
-    title: str | None = None
+    name: str = ""
+    entry: str | None = None
+    episode: int | None = None
+    published: int | None = None
 
     @field_validator("magnet")
     @classmethod
@@ -71,30 +95,18 @@ class AddMagnetBody(BaseModel):
         return v
 
 
+def _magnet_name(magnet: str) -> str:
+    names = parse_qs(urlparse(magnet).query).get("dn") or [""]
+    return names[0]
+
+
 @router.post("/torrents/add")
 async def add_torrent(body: AddMagnetBody, request: Request):
-    cfg = request.app.state.cfg
-    download_dir = cfg.default_dir
-    if body.title:
-        q = body.title.lower()
-        entries = [e for e in request.app.state.anime_state.entries() if not e.deprecated]
-        match = next(
-            (e for e in entries
-             if q in e.title.lower() or q in (e.search_name or "").lower()),
-            None,
-        )
-        folder = _safe_dirname(match.title if match else body.title)
-        download_dir = os.path.join(cfg.default_dir, folder)
-        os.makedirs(download_dir, exist_ok=True)
-    torrent_id = await add_magnet(
-        cfg.transmission_url, cfg.transmission_user,
-        cfg.transmission_pass, body.magnet, download_dir,
-    )
-    if torrent_id is not None:
-        _log.info("Added torrent to Transmission: %s -> %s", body.title or "(no title)", download_dir)
-        asyncio.create_task(remove_when_done(
-            cfg.transmission_url, cfg.transmission_user, cfg.transmission_pass, torrent_id,
-        ))
-        return {"ok": True}
-    _log.error("Transmission rejected magnet for: %s", body.title or "(no title)")
-    return {"ok": False, "error": "Transmission rejected the magnet"}
+    """Add a torrent, saving it where the chosen watchlist entry saves its episodes."""
+    bound = None
+    if body.entry:
+        bound = request.app.state.anime_state.get(body.entry)
+        if bound is None:
+            return {"ok": False, "error": f"{body.entry} is no longer in the watchlist"}
+    name = body.name.strip() or _magnet_name(body.magnet)
+    return await request.app.state.tracker.manual_add(body.magnet, name, bound, body.episode, body.published)

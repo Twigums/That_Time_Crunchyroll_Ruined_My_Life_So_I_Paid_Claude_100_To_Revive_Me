@@ -1,145 +1,219 @@
-import asyncio
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+import base64
+from unittest.mock import AsyncMock, patch
+
 from fastapi.testclient import TestClient
 
-from lydarr.config import AppConfig
-from lydarr.file_manager import MediaEntry, MediaState
-from lydarr.web.app import create_app
+from lydarr.file_manager import MediaEntry
+from lydarr.state import TrackerState
+from lydarr.tests.webrig import WebRig, make_cfg
 
 
-def _make_cfg(tmp_path) -> AppConfig:
-    return AppConfig(
-        anime_file = str(tmp_path / "media.toml"),
-        transmission_url = "http://localhost:9091/transmission/rpc",
-        transmission_user = None,
-        transmission_pass = None,
-        default_dir = "/downloads",
-        default_dir_set = True,
-        lydarr_user = None,
-        lydarr_pass = None,
-    )
+def _quiet_tracker(rig: WebRig):
+    """Let the tracker loop run without doing anything."""
+    return patch.object(rig.tracker, "tick", new_callable = AsyncMock)
 
 
-def test_daemon_status_not_running(tmp_path):
-    cfg = _make_cfg(tmp_path)
-    state = MediaState([MediaEntry(title = "Solo Leveling")])
-    with TestClient(create_app(cfg, state)) as client:
-        resp = client.get("/api/daemon/status")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["running"] is False
-    assert "Solo Leveling" in data["tracking"]
-    assert data["started_at"] is None
-
-
-def test_daemon_start(tmp_path):
-    cfg = _make_cfg(tmp_path)
-    state = MediaState([MediaEntry(title = "Solo Leveling")])
-
-    never_done = MagicMock()
-    never_done.done.return_value = False
-
-    with patch("lydarr.web.routes.daemon.asyncio.create_task", return_value = never_done):
-        with TestClient(create_app(cfg, state)) as client:
-            resp = client.post("/api/daemon/start")
-
-    assert resp.status_code == 200
-    assert resp.json()["ok"] is True
-
-
-def test_daemon_start_already_running(tmp_path):
-    cfg = _make_cfg(tmp_path)
-    state = MediaState([MediaEntry(title = "Solo Leveling")])
-
-    running_task = MagicMock()
-    running_task.done.return_value = False
-
-    with patch("lydarr.web.routes.daemon.asyncio.create_task", return_value = running_task):
-        with TestClient(create_app(cfg, state)) as client:
-            client.post("/api/daemon/start")
-            resp = client.post("/api/daemon/start")
-
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["ok"] is False
-    assert data["reason"] == "already running"
-
-
-def test_daemon_stop_not_running(tmp_path):
-    cfg = _make_cfg(tmp_path)
-    state = MediaState([])
-    with TestClient(create_app(cfg, state)) as client:
-        resp = client.post("/api/daemon/stop")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["ok"] is False
-    assert data["reason"] == "not running"
-
-
-def test_rtorrent_status_online(tmp_path):
-    cfg = _make_cfg(tmp_path)
-    state = MediaState([])
+def test_status_reports_tracker_and_transmission_in_one_call(tmp_path):
+    rig = WebRig(tmp_path)
     with patch("lydarr.web.routes.daemon.is_client_up", new_callable = AsyncMock, return_value = True):
-        with TestClient(create_app(cfg, state)) as client:
-            resp = client.get("/api/rtorrent/status")
-    assert resp.status_code == 200
-    assert resp.json()["online"] is True
+        with TestClient(rig.app) as client:
+            data = client.get("/api/status").json()
+    assert data == {
+        "tracker": {"running": False, "started_at": None},
+        "transmission": {"online": True},
+        "review": 0,
+    }
 
 
-def test_rtorrent_status_offline(tmp_path):
-    cfg = _make_cfg(tmp_path)
-    state = MediaState([])
+def test_status_counts_items_waiting_for_review(tmp_path):
+    rig = WebRig(tmp_path, [MediaEntry(title = "Show")])
+    rig.tstate.episode("Show", 4).status = "review"
     with patch("lydarr.web.routes.daemon.is_client_up", new_callable = AsyncMock, return_value = False):
-        with TestClient(create_app(cfg, state)) as client:
-            resp = client.get("/api/rtorrent/status")
-    assert resp.status_code == 200
-    assert resp.json()["online"] is False
+        with TestClient(rig.app) as client:
+            data = client.get("/api/status").json()
+    assert data["review"] == 1
+    assert data["transmission"] == {"online": False}
 
 
-def test_daemon_status_tracking_list(tmp_path):
-    cfg = _make_cfg(tmp_path)
-    state = MediaState([
-        MediaEntry(title = "Solo Leveling"),
-        MediaEntry(title = "Dan Da Dan"),
-    ])
-    with TestClient(create_app(cfg, state)) as client:
-        resp = client.get("/api/daemon/status")
-    data = resp.json()
-    assert "Solo Leveling" in data["tracking"]
-    assert "Dan Da Dan" in data["tracking"]
-
-
-def test_combined_status_transmission_online_daemon_not_running(tmp_path):
-    """Regression: when Transmission is online but the daemon is not running,
-    the two status endpoints together must indicate that something is active
-    so the UI can show Stop instead of Start."""
-    cfg = _make_cfg(tmp_path)
-    state = MediaState([])
+def test_old_status_routes_still_answer(tmp_path):
+    rig = WebRig(tmp_path, [MediaEntry(title = "A"), MediaEntry(title = "B", deprecated = True)])
     with patch("lydarr.web.routes.daemon.is_client_up", new_callable = AsyncMock, return_value = True):
-        with TestClient(create_app(cfg, state)) as client:
-            daemon_resp = client.get("/api/daemon/status")
-            tx_resp = client.get("/api/rtorrent/status")
-    daemon_data = daemon_resp.json()
-    tx_data = tx_resp.json()
-    assert daemon_data["running"] is False
-    assert tx_data["online"] is True
-    # UI derives active = daemon_running OR tx_online — must be True here
-    assert daemon_data["running"] or tx_data["online"]
+        with TestClient(rig.app) as client:
+            daemon = client.get("/api/daemon/status").json()
+            legacy = client.get("/api/rtorrent/status").json()
+            current = client.get("/api/transmission/status").json()
+    assert daemon == {"running": False, "started_at": None, "tracking": ["A"]}
+    assert legacy == current == {"online": True}
 
 
-def test_daemon_status_started_at_set_after_start(tmp_path):
-    cfg = _make_cfg(tmp_path)
-    state = MediaState([MediaEntry(title = "Solo Leveling")])
+def test_start_and_stop_toggle_the_tracker_and_remember_the_choice(tmp_path):
+    rig = WebRig(tmp_path)
+    with _quiet_tracker(rig), TestClient(rig.app) as client:
+        assert client.post("/api/daemon/start").json() == {"ok": True}
+        running = client.get("/api/daemon/status").json()
+        assert running["running"] is True and running["started_at"] is not None
+        assert client.post("/api/daemon/start").json() == {"ok": False, "reason": "already running"}
 
-    done_task = MagicMock()
-    done_task.done.return_value = False
+        saved = TrackerState(rig.cfg.state_file)
+        saved.load()
+        assert saved.enabled is True
 
-    with patch("lydarr.web.routes.daemon.asyncio.create_task", return_value = done_task):
-        with TestClient(create_app(cfg, state)) as client:
-            client.post("/api/daemon/start")
-            resp = client.get("/api/daemon/status")
+        assert client.post("/api/daemon/stop").json() == {"ok": True}
+        assert client.get("/api/daemon/status").json()["running"] is False
+        assert client.post("/api/daemon/stop").json() == {"ok": False, "reason": "not running"}
 
-    data = resp.json()
-    assert data["running"] is True
-    assert data["started_at"] is not None
+    saved = TrackerState(rig.cfg.state_file)
+    saved.load()
+    assert saved.enabled is False
+
+
+def test_tracker_starts_with_an_empty_watchlist(tmp_path):
+    rig = WebRig(tmp_path)
+    with _quiet_tracker(rig), TestClient(rig.app) as client:
+        assert client.post("/api/daemon/start").json() == {"ok": True}
+
+
+def test_tracker_resumes_on_boot_when_it_was_left_running(tmp_path):
+    cfg = make_cfg(tmp_path)
+    earlier = TrackerState(cfg.state_file)
+    earlier.enabled = True
+    import asyncio
+    asyncio.run(earlier.save())
+
+    rig = WebRig(tmp_path, cfg = cfg, resume_tracker = True)
+    rig.tstate.load()
+    with _quiet_tracker(rig), TestClient(rig.app) as client:
+        assert client.get("/api/daemon/status").json()["running"] is True
+
+
+def test_tracker_stays_off_on_boot_when_it_was_stopped(tmp_path):
+    rig = WebRig(tmp_path, resume_tracker = True)
+    with _quiet_tracker(rig), TestClient(rig.app) as client:
+        assert client.get("/api/daemon/status").json()["running"] is False
+
+
+# ── the single Start / Stop control ──────────────────────────────────────────
+
+def test_power_start_brings_up_transmission_then_the_tracker(tmp_path):
+    rig = WebRig(tmp_path)
+    up = AsyncMock(side_effect = [False, True])
+    with _quiet_tracker(rig), \
+         patch("lydarr.web.routes.daemon.is_client_up", up), \
+         patch("lydarr.web.routes.daemon._systemctl", new_callable = AsyncMock, return_value = (0, "")) as systemctl, \
+         patch("lydarr.web.routes.daemon._pause", new_callable = AsyncMock):
+        with TestClient(rig.app) as client:
+            data = client.post("/api/power/start").json()
+
+    systemctl.assert_awaited_once()
+    assert systemctl.await_args.args[1] == "start"
+    assert data["ok"] is True
+    assert data["tracker"]["running"] is True
+    assert data["transmission"] == {"ok": True, "started": True}
+
+
+def test_power_start_with_transmission_already_up_only_starts_the_tracker(tmp_path):
+    rig = WebRig(tmp_path)
+    with _quiet_tracker(rig), \
+         patch("lydarr.web.routes.daemon.is_client_up", new_callable = AsyncMock, return_value = True), \
+         patch("lydarr.web.routes.daemon._systemctl", new_callable = AsyncMock) as systemctl:
+        with TestClient(rig.app) as client:
+            data = client.post("/api/power/start").json()
+
+    systemctl.assert_not_awaited()
+    assert data["tracker"]["running"] is True
+    assert data["transmission"] == {"ok": True, "started": False}
+
+
+def test_power_start_still_starts_the_tracker_when_transmission_will_not(tmp_path):
+    rig = WebRig(tmp_path)
+    with _quiet_tracker(rig), \
+         patch("lydarr.web.routes.daemon.is_client_up", new_callable = AsyncMock, return_value = False), \
+         patch("lydarr.web.routes.daemon._systemctl", new_callable = AsyncMock,
+               return_value = (5, "Unit transmission-daemon.service not found.")):
+        with TestClient(rig.app) as client:
+            data = client.post("/api/power/start").json()
+
+    assert data["ok"] is False
+    assert data["reason"] == "Unit transmission-daemon.service not found."
+    assert data["tracker"]["running"] is True
+
+
+def test_power_stop_stops_the_tracker_then_transmission(tmp_path):
+    rig = WebRig(tmp_path)
+    up = AsyncMock(side_effect = [True, True, False])
+    with _quiet_tracker(rig), \
+         patch("lydarr.web.routes.daemon.is_client_up", up), \
+         patch("lydarr.web.routes.daemon._systemctl", new_callable = AsyncMock, return_value = (0, "")) as systemctl, \
+         patch("lydarr.web.routes.daemon._pause", new_callable = AsyncMock):
+        with TestClient(rig.app) as client:
+            client.post("/api/power/start")
+            data = client.post("/api/power/stop").json()
+
+    assert systemctl.await_args.args[1] == "stop"
+    assert data["ok"] is True
+    assert data["tracker"]["running"] is False
+    assert data["transmission"] == {"ok": True, "stopped": True}
+
+
+def test_transmission_start_times_out_cleanly(tmp_path):
+    rig = WebRig(tmp_path)
+    with patch("lydarr.web.routes.daemon.is_client_up", new_callable = AsyncMock, return_value = False), \
+         patch("lydarr.web.routes.daemon._systemctl", new_callable = AsyncMock, return_value = (0, "")), \
+         patch("lydarr.web.routes.daemon._pause", new_callable = AsyncMock):
+        with TestClient(rig.app) as client:
+            data = client.post("/api/transmission/start").json()
+    assert data == {"ok": False, "reason": "Transmission did not come up in time"}
+
+
+def test_transmission_stop_when_already_down_is_a_no_op(tmp_path):
+    rig = WebRig(tmp_path)
+    with patch("lydarr.web.routes.daemon.is_client_up", new_callable = AsyncMock, return_value = False), \
+         patch("lydarr.web.routes.daemon._systemctl", new_callable = AsyncMock) as systemctl:
+        with TestClient(rig.app) as client:
+            data = client.post("/api/transmission/stop").json()
+    assert data == {"ok": True, "stopped": False}
+    systemctl.assert_not_awaited()
+
+
+def test_systemctl_uses_the_configured_unit_and_scope(tmp_path):
+    import asyncio
+    from lydarr.web.routes.daemon import _systemctl
+
+    class _Proc:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b""
+
+    for scope, expected in (
+        ("user", ["systemctl", "--user", "start", "my-transmission"]),
+        ("system", ["sudo", "-n", "systemctl", "start", "my-transmission"]),
+    ):
+        cfg = make_cfg(tmp_path, transmission_unit = "my-transmission", transmission_scope = scope)
+        with patch("lydarr.web.routes.daemon.asyncio.create_subprocess_exec", new_callable = AsyncMock,
+                   return_value = _Proc()) as spawn:
+            assert asyncio.run(_systemctl(cfg, "start")) == (0, "")
+        assert list(spawn.await_args.args) == expected
+
+
+# ── auth and headers ─────────────────────────────────────────────────────────
+
+def test_api_requires_credentials_when_configured(tmp_path):
+    rig = WebRig(tmp_path, cfg = make_cfg(tmp_path, lydarr_user = "admin", lydarr_pass = "secret"))
+    good = {"Authorization": "Basic " + base64.b64encode(b"admin:secret").decode()}
+    bad = {"Authorization": "Basic " + base64.b64encode(b"admin:nope").decode()}
+    with TestClient(rig.app) as client:
+        assert client.get("/api/anime/list").status_code == 401
+        assert client.get("/api/anime/list", headers = bad).status_code == 401
+        assert client.get("/api/anime/list", headers = good).status_code == 200
+
+
+def test_pages_forbid_inline_scripts_and_always_revalidate(tmp_path):
+    rig = WebRig(tmp_path)
+    with TestClient(rig.app) as client:
+        page = client.get("/")
+        api = client.get("/api/anime/list")
+    assert page.status_code == 200
+    assert "script-src 'self';" in page.headers["Content-Security-Policy"]
+    assert page.headers["Cache-Control"] == "no-cache"
+    assert "Cache-Control" not in api.headers
