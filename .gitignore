@@ -218,4 +218,11 @@ __marimo__/
 .streamlit/secrets.toml
 
 *.out
+
+# lydarr: your watchlist and what lydarr writes next to it
 anime.toml
+anime.toml.tmp
+lydarr-state.json
+lydarr-cache.json
+*.json.tmp
+*.log.[0-9]*

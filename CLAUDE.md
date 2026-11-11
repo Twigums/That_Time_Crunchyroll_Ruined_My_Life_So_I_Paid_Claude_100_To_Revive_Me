@@ -2,13 +2,13 @@
 
 ## What this is
 
-Python port of [lydarr](https://github.com/Twigums/lydarr) (Haskell). Daemon that tracks airing anime and releasing manga, searches Nyaa.si for subbed torrents/scanlations, and adds them to Transmission. Includes a web UI for searching media, managing the watchlist, and browsing torrent results manually.
+Python port of [lydarr](https://github.com/Twigums/lydarr) (Haskell). It tracks airing anime (and, experimentally, manga), finds each new episode on Nyaa.si and adds it to Transmission. A web UI covers adding shows, the watchlist, a calendar, a torrent browser and an activity log.
 
-The `nyaa/` package is a **first-party inline port** of the Haskell library at `/home/twi/git/nyaa-hs`. Do not import external nyaa Python libraries — reimplement from the Haskell source.
+The `nyaa/` package is a **first-party inline port** of the Haskell library `nyaa-hs`. Do not import external nyaa Python libraries — reimplement from the Haskell source.
 
-The `anilist/` package is a lightweight GraphQL client for the [AniList API](https://anilist.co/graphiql), used for anime and manga status, episode air times, and web UI search.
+The `anilist/` package is a GraphQL client for the [AniList API](https://anilist.co/graphiql).
 
-See `plan.md` for the full roadmap.
+`README.md` is the user-facing manual; keep it in step with behaviour changes.
 
 ---
 
@@ -16,39 +16,57 @@ See `plan.md` for the full roadmap.
 
 ```
 lydarr-py/
-├── anime.toml              # Watchlist: [[media]] blocks with title, type, submitters
+├── anime.example.toml      # Every watchlist field, annotated (the real anime.toml is the user's and git-ignored)
+├── lydarr.service          # systemd user unit template
 ├── modules/
 │   ├── nyaa/               # Port of nyaa-hs — Nyaa.si scraping + search
-│   │   ├── types.py        # Torrent, SearchParams, NyaaError, enums
+│   │   ├── types.py        # Torrent (+ .published unix time, .info_hash), SearchParams, NyaaError, enums
 │   │   ├── categories.py   # Category map lookups
 │   │   ├── magnet.py       # magnet_builder()
 │   │   ├── http.py         # Async httpx fetchers
 │   │   ├── search.py       # Public API: search(), get_torrent(), etc.
 │   │   └── parser/
-│   │       ├── _utils.py   # Shared helpers: last_segment(), read_int()
+│   │       ├── _utils.py   # last_segment(), read_int(), parse_timestamp() (Nyaa dates are UTC), magnet_hash()
 │   │       ├── rss.py      # RSS feed → list[Torrent]
 │   │       └── html.py     # HTML listing/detail → list[Torrent] / TorrentDetail
-│   └── anilist/            # AniList GraphQL client — media search, status, and episode air times
-│       ├── types.py        # AnilistMedia, AiringEpisode, MediaType, MediaStatus, AnilistError
-│       ├── http.py         # graphql() POST helper
-│       └── search.py       # search(), find_by_title() — retries with pre-colon substring when full title returns no results; airing_schedules() batches every tracked show's episode times for a date range in one paginated query
-└── src/
-    └── lydarr/
-        ├── config.py       # AppConfig from env vars (Transmission URL/auth, media file, download dir)
-        ├── torrent_client.py  # is_client_up(), wait_for_client(), add_magnet(), _rpc() via Transmission JSON-RPC
-        ├── nyaa_search.py  # search_episode(), search_chapter(): query variants, filter_submitters(), prefer_hevc()
-        ├── file_manager.py # MediaEntry(title, type, submitters, deprecated, download_dir, check_delay), MediaState (get/remove/update), read_entries(), TOML I/O
-        ├── tracker.py      # track_media(cfg, state, entry) async coroutine; dispatches anime vs manga; downloads into entry.download_dir if set, else a per-title subdir under LYDARR_DEFAULT_DIR named from AniList display title (_safe_dirname strips invalid path chars); searches Nyaa entry.check_delay minutes after air time, falling back to DEFAULT_CHECK_DELAY (60)
-        ├── web/            # FastAPI web UI
-        │   ├── app.py      # create_app(cfg, state); app.state holds cfg, anime_state, daemon_task
-        │   ├── routes/
-        │   │   ├── anime.py    # /api/anime/search|list|add|remove|deprecate|reactivate|submitters|status|calendar (status and calendar ranges cached + single-flight via _cached() to spare AniList under multiple clients)
-        │   │   ├── torrents.py # /api/torrents/search, /api/torrents/add
-        │   │   └── daemon.py   # /api/daemon/status|start|stop; /api/rtorrent/status; /api/transmission/start|stop
-        │   └── static/
-        │       └── index.html  # Single-page UI: 3 resizable panels, floating Start/Stop FAB; middle panel has Watchlist and Calendar tabs (month/week episode grid, per-show colours, click an episode to search it)
-        └── __main__.py     # asyncio.run(main()); starts daemon + optional web server; --host/--port flags
+│   └── anilist/
+│       ├── types.py        # AnilistMedia, AiringEpisode, enums, AnilistError / AnilistRateLimited / AnilistUnavailable
+│       ├── http.py         # graphql(): ONE gate for all requests — serialised, spaced to the advertised limit, 429 pauses every caller, outages open a circuit breaker
+│       └── search.py       # search(), find_by_title(), media_by_ids() (50 per request), airing_schedules(), prequel_episode_counts()
+└── src/lydarr/
+    ├── config.py           # AppConfig from env vars (+ .env)
+    ├── file_manager.py     # MediaEntry, MediaState (in-memory + atomic TOML writes), read_entries(), WatchlistError
+    ├── paths.py            # resolve_download_dir(): the ONE save-path formula (tracker, UI and manual adds)
+    ├── media_store.py      # MediaStore: disk-backed AniList cache (media, schedules, prequel counts); refresh every 6h in a few batched requests; serves stale data with backoff
+    ├── release.py          # parse_release(name) → Release(group, titles, season, episode, version, resolution, hevc, batch, special)
+    ├── matcher.py          # evaluate(target, torrents, now, policy) → MatchResult: hard gates, then submitter/HEVC waits, then ranking; near misses for review
+    ├── nyaa_search.py      # find_candidates() (one newest-first request per check; numbered queries only for catch-up), search_chapter() for manga
+    ├── state.py            # TrackerState: per-episode records, learned offsets, activity log, torrents to reap, tracker on/off; JSON on disk
+    ├── torrent_client.py   # Transmission JSON-RPC: add_magnet() → AddedTorrent, torrent_progress()/remove_torrents() by info hash
+    ├── tracker.py          # Tracker: tick() scheduler, review/approve/skip/retry, manual_add(), preview(), reap(), manga loop
+    ├── __main__.py         # CLI: `lydarr` (web + tracker), `--no-web`, `lydarr check`
+    ├── web/
+    │   ├── app.py          # create_app(cfg, state, store=, tstate=, tracker=, resume_tracker=); error handlers; CSP
+    │   ├── routes/
+    │   │   ├── anime.py    # /api/anime/list|search|add|remove|deprecate|reactivate|update|backfill|refresh|calendar
+    │   │   ├── torrents.py # /api/torrents/search (optionally judged by the tracker), /api/torrents/add
+    │   │   ├── activity.py # /api/activity, /api/activity/approve|skip|retry
+    │   │   └── daemon.py   # /api/status, /api/daemon/*, /api/transmission/*, /api/power/start|stop
+    │   └── static/         # index.html, app.css, js/*.js (ES modules, no build step, no inline scripts)
+    └── tests/
+        ├── conftest.py     # autouse fixture that blocks AniList, Nyaa and Transmission
+        └── webrig.py       # WebRig: a real app over in-memory AniList data, for route tests
 ```
+
+---
+
+## How the pieces fit
+
+- **One source of AniList data.** Only `MediaStore.refresh()` (and the interactive search route) call AniList. The tracker, `/api/anime/list` and the calendar read the store. Never add a per-entry or per-request AniList call.
+- **One scheduler.** `Tracker.tick()` runs every minute. For each active anime it walks the cached schedule and checks every episode that has aired (plus `check_delay`), is in scope (aired after the show's `since`, or `backfill`), and is not settled. Each episode has its own retry timer and gives up after 14 days. Entries are re-read from `MediaState` every tick, so edits, removals and archiving apply immediately.
+- **Matching is gated, then ranked.** A torrent must be uploaded after the air time (24 h tolerance), be the same series, be a single regular episode, and carry a number that fits (AniList's, or offset by earlier seasons' lengths, a learned per-group offset, or `episode_offset`). Wrong-number releases in the episode's own week become near misses → `review` status → the Activity tab.
+- **One save-path formula.** `paths.resolve_download_dir(cfg, entry, info)`: the entry's `download_dir`, else `LYDARR_DEFAULT_DIR/<AniList display title>`. If the folder cannot be created the add fails and is retried; it never falls back to another folder.
+- **Torrents are identified by info hash**, never by Transmission's session-scoped numeric id.
 
 ---
 
@@ -56,104 +74,59 @@ lydarr-py/
 
 | Decision | Choice | Reason |
 |---|---|---|
-| Concurrency | `asyncio` + `asyncio.gather` | One coroutine per title, I/O-bound throughout |
-| HTTP | `httpx` async client | Handles AniList GraphQL, Nyaa bytes, and Transmission RPC |
-| HTML parsing | `beautifulsoup4` + `lxml` backend | Direct equivalent of html-conduit |
+| Concurrency | `asyncio`, one scheduler loop | I/O-bound; per-episode timers instead of one sleeping coroutine per title |
+| HTTP | `httpx` async client | AniList GraphQL, Nyaa bytes, Transmission RPC |
+| HTML parsing | `beautifulsoup4` + `lxml` | Direct equivalent of html-conduit |
 | XML/RSS parsing | `defusedxml` | Safe XML; equivalent of xml-conduit |
-| Torrent client | Transmission JSON-RPC | Lightweight, simple API, no extra binary needed |
-| Watchlist format | TOML (`anime.toml`) | Human-editable, supports per-title metadata (type, submitters, search_name) |
+| Fuzzy title match | `rapidfuzz` | Release title vs AniList names in the matcher |
+| Torrent client | Transmission JSON-RPC | Lightweight, no extra binary |
+| Transmission start/stop | `systemctl` on a configurable unit | The UI controls the daemon's lifetime |
+| Watchlist format | TOML (`anime.toml`) | Human-editable; holds configuration only |
+| Runtime state | JSON next to the watchlist | History and cache kept out of the hand-edited file |
 | Web framework | FastAPI | Async-native, minimal |
-| Type annotations | Full throughout | Dataclasses for records, `Enum` for sum types |
-| Anime/manga scheduling | AniList GraphQL API | Episode air times, status, and chapter counts; single API for all media |
-| Transmission stop | `session-close` RPC | Graceful shutdown via existing RPC channel; no subprocess or PID files |
+| Frontend | Static HTML/CSS/ES modules | No build step; `uv sync` is the whole install |
 
 ---
 
 ## Watchlist format
 
-```toml
-[[media]]
-title = "Frieren: Beyond Journey's End"
-type = "anime"
-submitters = ["SubsPlease", "Erai-raws"]
-check_delay = 90       # search Nyaa 90 min after the episode airs (default: 60)
+See `anime.example.toml` and the README's table. Fields: `title`, `type`, `anilist_id`, `submitters`, `search_name`, `download_dir`, `check_delay`, `episode_offset`, `last_chapter`, `deprecated`. Read with stdlib `tomllib`; written with a minimal serialiser in `file_manager._write` (unknown keys and comments are not preserved).
 
-[[media]]
-title = "That Time I Got Reincarnated as a Slime Season 4"
-type = "anime"
-submitters = []
-search_name = "Tensei Shitara Slime Datta Ken 4th Season"  # Nyaa query override
-
-[[media]]
-title = "One Piece"
-type = "manga"
-submitters = []        # empty = accept all uploaders
-last_chapter = 1100   # daemon resumes from next chapter
-deprecated = true     # hidden in UI; skipped by daemon; can be reactivated
-```
-
-Fields:
-- `title` — used as the AniList search query; also the display name throughout
-- `type` — `"anime"` or `"manga"` (default: `"anime"`)
-- `submitters` — case-insensitive substring match against torrent title; falls back to all results if empty or no match
-- `last_chapter` — manga only; daemon downloads chapters after this number
-- `search_name` — optional override for Nyaa lookups only; AniList always uses `title` directly
-- `check_delay` — anime only; minutes to wait after AniList's air time before searching Nyaa. Unset/`0` uses `DEFAULT_CHECK_DELAY` (60). Editable in the web UI (auto-populated with the default)
-- `download_dir` — optional per-entry override for the full save path (including the title folder, e.g. `/media/Anime/MARRIAGETOXIN`); empty falls back to `LYDARR_DEFAULT_DIR/<AniList display title>`. Editable in the web UI (auto-populated with the full default path)
-- `deprecated` — optional boolean (default `false`); entry is preserved but hidden/inactive
-
-Read with stdlib `tomllib`; written with a minimal custom serialiser (no extra dependency).
+`title` is the entry's key everywhere (API bodies, `TrackerState`). `anilist_id` is resolved once by title and then stored.
 
 ---
 
 ## Environment variables
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `ANIME_FILE` | `anime.toml` | Path to watchlist file |
-| `TRANSMISSION_URL` | `http://localhost:9091/transmission/rpc` | Transmission RPC endpoint |
-| `TRANSMISSION_USER` | unset | Transmission username (if auth enabled) |
-| `TRANSMISSION_PASS` | unset | Transmission password (if auth enabled) |
-| `LYDARR_DEFAULT_DIR` | `~/Downloads` | Download directory passed to Transmission |
-| `LYDARR_USER` | unset | Web UI username for HTTP Basic Auth; leave unset to disable auth |
-| `LYDARR_PASS` | unset | Web UI password for HTTP Basic Auth; required when `LYDARR_USER` is set |
-| `LYDARR_WEB` | unset | Set to `1` to enable web UI alongside daemon |
-| `LYDARR_WEB_HOST` | `0.0.0.0` | Web UI bind address (overridden by `--host`) |
-| `LYDARR_WEB_PORT` | `8080` | Web UI port (overridden by `--port`) |
-| `LYDARR_TRANSMISSION_UNIT` | `transmission-daemon` | systemd unit the Start/Stop buttons control |
-| `LYDARR_TRANSMISSION_SCOPE` | `user` | `user` → `systemctl --user` (injects `XDG_RUNTIME_DIR` so it works outside a login session); `system` → `sudo -n systemctl` |
+Documented in the README and `.env.example`. All are read in `config.load_config()`; add new ones there and to both documents.
 
 ---
 
 ## Running
 
 ```bash
-# Install deps
 uv sync
-
-# Run daemon only
-uv run python -m lydarr
-
-# Run daemon + web UI
-LYDARR_WEB=1 uv run python -m lydarr
-
-# Web UI only (for manual torrent browsing, no tracking)
-uv run python -m lydarr --web-only
-
-# Bind to localhost (e.g. behind a reverse proxy)
-uv run python -m lydarr --web-only --host 127.0.0.1 --port 8080
+uv run lydarr                  # web UI + tracker (tracker resumes if it was on)
+uv run lydarr --no-web         # tracker only
+uv run lydarr check [title]    # dry run: what would be picked, and why
+uv run pytest
 ```
+
+A live instance may be running from the main checkout: its static files are served straight from disk, so develop UI changes in a worktree and test on another port.
 
 ---
 
 ## Conventions
 
 - **snake_case** everywhere — functions, variables, modules
+- Keyword arguments and defaults are written with spaces: `f(key = value)`, `field(default_factory = list)`
 - **No comments** unless the why is non-obvious (a hidden constraint, workaround, etc.)
 - **Dataclasses** for all record types; `frozen=True` where the object shouldn't mutate
-- **Custom exceptions** (`NyaaError`, `AnilistError`) for domain errors; catch at the tracker boundary
-- **`asyncio.sleep`** instead of `time.sleep` — all loops are async
+- **Custom exceptions** (`NyaaError`, `AnilistError`) for domain errors; the tracker and the app's exception handlers are the boundaries that catch them
+- **`asyncio.sleep`** instead of `time.sleep` — all loops are async. Code that tests need to fast-forward calls a module-level `_pause()`; tests patch that, never `asyncio.sleep` itself (patching it globally turns the app's background loops into busy loops)
 - Prefer returning `None` over raising when a "not found" is a normal outcome (e.g., no torrent yet)
+- Tests must not reach the network; `tests/conftest.py` enforces it
+- Frontend: no inline scripts or handlers (the CSP forbids them); panels talk through the event bus in `js/state.js`
 
 ---
 

@@ -2,106 +2,208 @@
 
 "That Time Crunchyroll Ruined My Life, So I Paid Claude $100 To Revive Me?" (クランチロールに人生をぶっ壊された　クロードに１００００円を払っちゃってオレは復活した件）
 
-Anime torrent downloader daemon that tracks airing anime/manga. The daemon waits for each episode or chapter's release, searches nyaa, and adds them to `transmission-daemon` automatically. A web UI is also included for QOL to search for and manage anime/manga.
+lydarr watches the anime you follow, waits for each episode to air, finds the right release on Nyaa and hands it to Transmission, saved into the folder you chose for that show. A web UI covers everything: adding shows, a calendar, a torrent browser for picking releases by hand, and a log of what was downloaded.
 
-## Requirements
+- [Quick start](#quick-start)
+- [Running it in the background](#running-it-in-the-background)
+- [Using the web UI](#using-the-web-ui)
+- [How an episode is chosen](#how-an-episode-is-chosen)
+- [Configuration](#configuration)
+- [Transmission setup](#transmission-setup)
+- [Troubleshooting](#troubleshooting)
+- [Upgrading from an older checkout](#upgrading-from-an-older-checkout)
+- [Development](#development)
 
-1. Install `uv`.
+## Quick start
 
-2. `apt install transmission-daemon`
-
-## Setup
+You need [uv](https://docs.astral.sh/uv/), Python 3.14 (uv installs it for you) and Transmission:
 
 ```bash
-uv sync
+sudo apt install transmission-daemon
 ```
 
-Add entries to `anime.toml` manually:
+Then, in the repository:
 
-```toml
-[[media]]
-title = "TITLE_OF_ANIME"
-type = "anime" # "anime" or "manga"
-search_name = "SEARCH_NAME" # title used to search nyaa with
-submitters = ["SUBMITTER_1", "SUBMITTER_2"] # chosen submitter(s)
-check_delay = 60 # minutes to wait after the episode airs before searching nyaa (default: 60)
-deprecated = true # skipped by daemon
-
-
-# TODO
-[[media]]
-title = "TITLE_OF_MANGA"
-type = "manga"
-submitters = [] # empty = accept all uploaders
-last_chapter = 1
+```bash
+uv sync                    # install dependencies into .venv
+cp .env.example .env       # then set LYDARR_DEFAULT_DIR and anything else you need
+uv run lydarr              # web UI on http://localhost:8080
 ```
 
-Or use the web-ui below...
+Open the page, search for a show under **Add a show**, press **Track**, then press **Start**. From then on lydarr downloads each new episode as it comes out. It remembers that it was started, so after a restart or reboot it carries on by itself.
+
+Other ways to run it:
+
+```bash
+uv run lydarr --host 127.0.0.1 --port 8080   # choose the bind address and port
+uv run lydarr --no-web                       # tracker only, no web UI
+uv run lydarr --log lydarr.log               # also log to a file (rotated at 5 MB)
+uv run lydarr check                          # show what it would download; changes nothing
+uv run lydarr check "apothecary" --episode 4 # one show, one episode, with reasons
+```
+
+## Running it in the background
+
+Use a systemd user service. It starts at boot, restarts after a crash, and keeps logs, none of which a shell job does. (`Ctrl+Z`, `bg`, `disown` leaves the process tied to a terminal that no longer exists, with no restart and no logs.)
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp lydarr.service ~/.config/systemd/user/lydarr.service
+# The unit assumes the repository is at ~/git/lydarr-py. Edit the two paths in it if not.
+
+systemctl --user daemon-reload
+systemctl --user enable --now lydarr
+loginctl enable-linger          # keep it running when you are logged out
+```
+
+Day to day:
+
+```bash
+systemctl --user status lydarr       # is it running?
+systemctl --user restart lydarr      # after pulling new code or editing .env
+journalctl --user -u lydarr -f       # follow the log
+```
+
+Settings come from `.env` in the repository. If you would rather keep them elsewhere, put `KEY=value` lines in `~/.config/lydarr/env`; those win over `.env`. Use absolute paths in either file.
+
+No systemd? This starts it detached from the terminal and logs to a file:
+
+```bash
+setsid nohup uv run lydarr --log lydarr.log >/dev/null 2>&1 &
+```
+
+## Using the web UI
+
+On a wide screen there are three panels; on a phone a bar at the bottom switches between them.
+
+**Header.** Two pills show whether the tracker and Transmission are running; click one to start or stop just that. **Start** brings up Transmission and then the tracker; **Stop** stops the tracker and then Transmission. The refresh button re-reads AniList, and the text beside it says how old the data is.
+
+**Add a show.** Search AniList and press **Track**. For a show that is already airing, **+ aired eps** also queues the episodes that are already out; plain **Track** only follows what airs from now on.
+
+**Watchlist.** Each show shows its next episode, or what the tracker is doing about the current one. Click the title to look for its torrents. The **⋯** menu has:
+
+- **Edit settings**
+  - *Search name on Nyaa*: what to search for when the AniList title finds nothing (most groups use the romaji title).
+  - *Preferred uploaders*: best first. Blank accepts anyone.
+  - *Save path*: the full folder for this show. Blank uses `LYDARR_DEFAULT_DIR/<AniList title>`, shown as the placeholder.
+  - *Check delay*: minutes after air time before the first search.
+  - *Episode number offset*: see [below](#when-it-picks-wrong-or-picks-nothing).
+- **Download aired episodes**: queue everything that aired before you added the show.
+- **Archive**: stop tracking but keep the entry and its settings. A show that finishes airing is archived for you once its last episode is in.
+- **Remove**: delete the entry and its history.
+
+**Calendar.** Every tracked show's episodes as a list, a week or a month, in your local time. Click an episode to see its releases.
+
+**Torrents.** Search Nyaa and add a release by hand.
+
+- **Save to** decides where an added torrent goes. Clicking a show or a calendar episode sets it to that show, and the path underneath is exactly where the files will land. It stays set while you edit the search box. Set it to *A new folder named after the release* to file something that is not on your watchlist.
+- Each result shows the release's group, episode number, resolution and codec, read from its name.
+- When you arrive from the calendar (a show and an episode number), every result is labelled with what the tracker makes of it: **Match**, waiting for a preferred uploader or an HEVC encode, a number that needs checking, or the reason it was ruled out. Results for other episodes are hidden until you ask for them.
+- Adding a release for a tracked show marks that episode as done, so the tracker will not fetch it again.
+
+**Activity.** Every torrent that was added, when, and where it was saved. At the top are releases the tracker **held for your check**: the right show at the right time, but with an episode number it did not expect. **Add this** downloads it and teaches the tracker that numbering, so the following weeks need no help.
+
+## How an episode is chosen
+
+AniList says when each episode airs. After the check delay, lydarr asks Nyaa for the newest uploads matching the show and reads every release name. A release is only used if all of these hold:
+
+1. **It was uploaded after the episode aired** (within a day before, to allow for early streams). This is what stops last season's episode 4 from being taken for this season's.
+2. **It is the same series.** The title has to match one of the show's AniList names, or contain every word of your search name.
+3. **It is one regular episode**: not a batch, recap, special, OVA or creditless opening.
+4. **Its number fits.** Either the number AniList uses, or that number plus the length of the earlier seasons. Season 3 episode 4 of a show whose first two seasons ran 24 episodes each is accepted as `- 04`, `3rd Season - 04`, `S03E04` and `- 52`. A release labelled with a different season is not accepted.
+
+Among the releases that pass:
+
+- Your **preferred uploaders** come first. If none of them has released within `LYDARR_FALLBACK_HOURS` (default 2) of the first check, anyone's release is accepted.
+- **HEVC** is preferred. If only a non-HEVC release is out, lydarr holds on for up to `LYDARR_HEVC_WAIT_HOURS` (default 2) for an HEVC one, then takes what there is.
+- Then the preferred resolution (`LYDARR_RESOLUTION`, default 1080), a `v2` over the original, trusted uploads, and finally seeders.
+
+Searches repeat every 15 minutes at first, then less often, for 14 days. A release that never appears does not hold up later episodes, and episodes that aired while lydarr was stopped are picked up when it starts again.
+
+### When it picks wrong, or picks nothing
+
+- **Nothing is found.** Usually the group uses a different title. Set *Search name on Nyaa* to the title you see on Nyaa.
+- **It is held for your check.** Open **Activity** and press **Add this** on the right release. The numbering is remembered for that show.
+- **You know the numbering already.** Set *Episode number offset* to the difference: if the group calls season 3 episode 4 `- 52`, the offset is 48.
+- **It resolved to the wrong AniList entry.** Remove the show and add it again from the search results, which stores the exact AniList id.
+- **You want to see its reasoning.** `uv run lydarr check "title"` prints every candidate with its verdict, without downloading anything.
+
+Manga tracking is **experimental**. AniList only reports a chapter count once a series has ended, so ongoing manga are not picked up automatically.
 
 ## Configuration
 
-Copy the example env file and fill in your values:
+### Environment variables
 
-Either locally:
+Set these in `.env` (see `.env.example`) or in the environment.
 
-```bash
-# Daemon only
-uv run python -m lydarr
+| Variable | Default | Purpose |
+|---|---|---|
+| `ANIME_FILE` | `anime.toml` | The watchlist file |
+| `LYDARR_DEFAULT_DIR` | `~/Downloads` | Root download folder; each show gets a subfolder unless it sets its own save path |
+| `TRANSMISSION_URL` | `http://localhost:9091/transmission/rpc` | Transmission RPC endpoint |
+| `TRANSMISSION_USER` / `TRANSMISSION_PASS` | unset | Transmission credentials, if it requires them |
+| `LYDARR_TRANSMISSION_UNIT` | `transmission-daemon` | systemd unit the Start/Stop controls act on |
+| `LYDARR_TRANSMISSION_SCOPE` | `user` | `user` runs `systemctl --user`; `system` runs `sudo -n systemctl` |
+| `LYDARR_FALLBACK_HOURS` | `2` | Hours to wait for preferred uploaders before accepting others |
+| `LYDARR_PREFER_HEVC` | `1` | Prefer HEVC/x265; `0` takes the best release straight away |
+| `LYDARR_HEVC_WAIT_HOURS` | `2` | Hours to hold out for an HEVC release |
+| `LYDARR_RESOLUTION` | `1080` | Preferred vertical resolution |
+| `LYDARR_WEB_HOST` | `0.0.0.0` | Web UI bind address (`--host` overrides) |
+| `LYDARR_WEB_PORT` | `8080` | Web UI port (`--port` overrides) |
+| `LYDARR_USER` / `LYDARR_PASS` | unset | HTTP Basic Auth for the web UI |
+| `LYDARR_LOG_FILE` | unset | Also log to this file (`--log` overrides) |
+| `LYDARR_STATE_FILE` | next to the watchlist | Download history and tracker state |
+| `LYDARR_CACHE_FILE` | next to the watchlist | AniList cache |
 
-# Daemon + web UI
-LYDARR_WEB=1 uv run python -m lydarr
+Without `LYDARR_USER`, anyone who can reach the page can add torrents and change save paths. Set a password, or bind to `127.0.0.1`, unless the network is one you trust.
 
-# Web UI only (browse and manage without auto-tracking)
-uv run python -m lydarr --web-only
+### The watchlist file
 
-# Bind to a specific address/port (e.g. behind a reverse proxy)
-uv run python -m lydarr --web-only --host 127.0.0.1 --port 8080
+The web UI writes `anime.toml` for you; `anime.example.toml` shows every field. Editing by hand works too, but restart lydarr afterwards, and note that comments are not kept when the UI next saves.
 
-# Write logs to a file in addition to stdout
-uv run python -m lydarr --log lydarr.log
+```toml
+[[media]]
+title = "The Apothecary Diaries Season 3"
+type = "anime"
+anilist_id = 195516
+submitters = ["SubsPlease", "Erai-raws"]
+search_name = "Kusuriya no Hitorigoto"
+download_dir = "/media/Anime/Apothecary Diaries/Season 3"
+check_delay = 145
 ```
 
-The web UI is served at `http://localhost:8080` by default.
+| Field | Meaning |
+|---|---|
+| `title` | Display name, and what AniList is searched for the first time |
+| `type` | `anime` (default) or `manga` |
+| `anilist_id` | Filled in on first lookup; pins the entry to one AniList page |
+| `submitters` | Preferred uploaders, best first; empty accepts anyone |
+| `search_name` | Nyaa search text, when the title finds nothing |
+| `download_dir` | Full save path for this show; empty uses `LYDARR_DEFAULT_DIR/<AniList title>` |
+| `check_delay` | Minutes after air time before the first search (default 60) |
+| `episode_offset` | Release number minus AniList number; leave out to detect |
+| `last_chapter` | Manga only: the last chapter you have |
+| `deprecated` | `true` for an archived entry |
 
-## How it works
+### Files lydarr writes
 
-For each entry in `anime.toml`, a coroutine runs concurrently via `asyncio.gather`:
+| File | Contents | Safe to delete? |
+|---|---|---|
+| `anime.toml` | Your watchlist | No |
+| `lydarr-state.json` | Which episodes were downloaded, the activity log, learned numbering, whether the tracker is on | Yes, but history is lost and tracking restarts from the next episode to air |
+| `lydarr-cache.json` | AniList data | Yes; it is fetched again |
 
-**Anime:**
-1. Fetches episode air schedule from AniList
-2. Sleeps until the next episode's air time
-3. Searches Nyaa.si (tries four query variants, filters by submitter, prefers HEVC/x265)
-4. Retries every 30 minutes until a torrent is found
-5. Adds the magnet to Transmission via its JSON-RPC API, saving to a per-title subfolder under `LYDARR_DEFAULT_DIR`
-6. Removes the entry from `anime.toml` once all episodes are downloaded
+### AniList usage
 
-**Manga:**
-1. Fetches chapter count and status from AniList
-2. Downloads any chapters newer than `last_chapter` sequentially
-3. Updates `last_chapter` in `anime.toml` after each successful add
-4. Checks again every 24 hours (releasing/hiatus) or removes the entry when finished
+AniList rate-limits clients, sharply so when its servers are struggling. lydarr asks for everything it tracks in a few combined requests every six hours and keeps the answers on disk, so page loads, the calendar and the tracker cost no requests at all. If AniList is down or says to slow down, lydarr keeps working from what it has, shows the age of the data in the header, and tries again later with increasing gaps.
 
-## Web UI
+## Transmission setup
 
-Three resizable panels:
-
-- **Media search** — search AniList by title (anime or manga), view status and next airing info, add to watchlist
-- **Watchlist / Calendar** — two tabs:
-  - *Watchlist* — current `anime.toml` entries with submitter tags; click a title to search its torrents; edit submitters, search name, save path and check delay inline; deprecate or remove entries
-  - *Calendar* — every tracked show's episodes on a month or week grid (AniList air times, shown in your local timezone), colour-coded per show, with month/week navigation and a Today button; click an episode to search it in the torrent browser
-- **Torrent browser** — search Nyaa by title and optional episode number, filter by HEVC/x265 or torrent type (Trusted/Normal/Remake), sort by any column (resizable), add directly to Transmission
-
-When adding a torrent from the browser, click the show title in the watchlist panel first to set the download folder context — the torrent will be saved to the correct per-title subfolder under `LYDARR_DEFAULT_DIR`. Clearing the search box (✕) resets the context.
-
-**Header** — red/green status dots for Transmission and Daemon. **Floating button** (bottom-right) starts and stops both the lydarr daemon and Transmission together via `systemctl --user`.
-
-## Running as a systemd service
-
-### Transmission
-
-Both lydarr and Transmission must run as the **same user** so Transmission can write to that user's download directory. The system package unit (`/lib/systemd/system/transmission-daemon.service`) runs as `debian-transmission`, so a user-level unit is required instead:
+lydarr and Transmission must run as the **same user**, so Transmission can write to that user's folders. The packaged unit runs as `debian-transmission`, so use a user unit instead:
 
 ```bash
+sudo systemctl disable --now transmission-daemon
+
 mkdir -p ~/.config/systemd/user
 cat > ~/.config/systemd/user/transmission-daemon.service << 'EOF'
 [Unit]
@@ -123,76 +225,53 @@ systemctl --user daemon-reload
 systemctl --user enable --now transmission-daemon
 ```
 
-#### rclone / FUSE download targets
+Finished torrents are removed from Transmission's list once complete; the files stay where they were saved.
 
-If `LYDARR_DEFAULT_DIR` is on an rclone FUSE mount, disable partial-file renaming in Transmission's `~/.config/transmission-daemon/settings.json` (stop Transmission first, edit, then restart):
+**rclone or other FUSE download folders.** Turn off partial-file renaming in `~/.config/transmission-daemon/settings.json` (stop Transmission, edit, start it again):
 
 ```json
 "rename-partial-files": false
 ```
 
-Without this, Transmission downloads to `filename.mkv.part` and renames on completion — rclone FUSE does not support that rename and the transfer fails with an I/O error.
+Otherwise Transmission downloads to `name.mkv.part` and renames at the end, which rclone's FUSE layer does not support, and the transfer fails with an I/O error.
 
-### Lydarr
+## Troubleshooting
 
-A service template is included at `lydarr.service`. It assumes the repo is at `~/git/lydarr-py`; adjust the paths if needed:
+| Symptom | What to check |
+|---|---|
+| A show says **Not found on AniList** | The title did not match. Remove it and add it from the search results. |
+| A show says **Looking for ep N** for hours | Run `uv run lydarr check "title"`. No candidates at all means the search name is wrong; candidates marked as waiting are within the uploader or HEVC wait. |
+| The header says **AniList unavailable** | AniList is down or rate limiting. Nothing to do; cached data is used and it retries by itself. |
+| An episode landed in the wrong folder | Check the show's *Save path*, and that **Save to** named that show when you added a torrent by hand. The Activity log records where each torrent went. |
+| **Transmission did not accept the torrent** | Transmission is not running, or the save path is not writable by its user. |
+| The Start button reports a systemctl error | `LYDARR_TRANSMISSION_UNIT` / `LYDARR_TRANSMISSION_SCOPE` do not match how Transmission is installed. |
+| The service will not start | `journalctl --user -u lydarr -n 50`. A wrong path in the unit file is the usual cause. |
 
-```bash
-# Install
-mkdir -p ~/.config/systemd/user
-cp lydarr.service ~/.config/systemd/user/lydarr.service
-systemctl --user daemon-reload
-systemctl --user enable --now lydarr
+## Upgrading from an older checkout
 
-# Survive logout (keeps user services running without an active login session)
-# Required for both lydarr and transmission-daemon user services
-loginctl enable-linger
-```
+- **Your watchlist carries over.** On first start each entry is matched to AniList once and `anilist_id` is written into `anime.toml`. This takes a minute or two for a long list.
+- **Tracking starts from the next episode to air.** Nothing that aired before the upgrade is fetched unless you choose **Download aired episodes**.
+- **The tracker starts off.** Press **Start** once; it is remembered from then on.
+- `uv run lydarr` now serves the web UI and runs the tracker together. `LYDARR_WEB=1` is no longer needed, `--web-only` is accepted and means the same as no flag, and `--debug` became `lydarr check`.
+- A finished show is archived instead of being re-downloaded and removed.
 
-Environment variables go in `~/.config/lydarr/env` (one `KEY=value` per line, no `export`). Use absolute paths — the working directory when running as a service may differ from the repo root:
-
-```bash
-mkdir -p ~/.config/lydarr
-cp .env.example ~/.config/lydarr/env
-```
-
-In `.env`:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `ANIME_FILE` | `anime.toml` | Path to watchlist file (use absolute path when running as a service) |
-| `TRANSMISSION_URL` | `http://localhost:9091/transmission/rpc` | Transmission RPC endpoint |
-| `TRANSMISSION_USER` | unset | Transmission username (if auth enabled) |
-| `TRANSMISSION_PASS` | unset | Transmission password (if auth enabled) |
-| `LYDARR_DEFAULT_DIR` | `~/Downloads` | Root download directory; each title gets its own subfolder |
-| `LYDARR_USER` | unset | Web UI username for HTTP Basic Auth; leave unset to disable auth |
-| `LYDARR_PASS` | unset | Web UI password; required when `LYDARR_USER` is set |
-| `LYDARR_WEB` | unset | Set to `1` to enable web UI alongside daemon |
-| `LYDARR_WEB_HOST` | `0.0.0.0` | Web UI bind address (overridden by `--host`) |
-| `LYDARR_WEB_PORT` | `8080` | Web UI port (overridden by `--port`) |
-
-## Usage
+## Development
 
 ```bash
-# Daemon only
-uv run python -m lydarr
-
-# Web UI only (daemon can be started on web)
-uv run python -m lydarr --web-only
-
-# Bind to a specific address/port
-uv run python -m lydarr --web-only --host 127.0.0.1 --port 8080
+uv sync
+uv run pytest              # the suite never touches the network
 ```
 
-## Systemd service
-
-Template is included at `lydarr.service`.
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp lydarr.service ~/.config/systemd/user/lydarr.service
-systemctl --user daemon-reload
-systemctl --user enable --now lydarr
-
-loginctl enable-linger
 ```
+modules/anilist/     AniList GraphQL client: rate-limit gate, batched lookups
+modules/nyaa/        Nyaa scraping and search (port of nyaa-hs)
+src/lydarr/
+  release.py         release-name parser
+  matcher.py         decides whether a torrent is a given episode
+  media_store.py     disk-backed AniList cache shared by everything
+  state.py           download history, activity log, tracker state
+  tracker.py         the episode queue
+  web/               FastAPI app, routes and the static UI
+```
+
+`CLAUDE.md` has the longer tour.

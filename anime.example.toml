@@ -1,0 +1,24 @@
+# Example watchlist. Copy to anime.toml, or just add shows from the web UI,
+# which writes this file for you. Only `title` is required.
+
+[[media]]
+title = "The Apothecary Diaries Season 3"
+type = "anime"
+anilist_id = 195516                      # filled in automatically on first lookup
+submitters = ["SubsPlease", "Erai-raws"] # preferred uploaders, best first; [] accepts anyone
+search_name = "Kusuriya no Hitorigoto"   # what to search Nyaa for, when the title finds nothing
+download_dir = "/media/Anime/Apothecary Diaries/Season 3"  # full save path for this show
+check_delay = 145                        # minutes after air time before the first search (default 60)
+episode_offset = 48                      # release number = AniList number + this; leave out to detect
+
+[[media]]
+title = "Frieren: Beyond Journey's End"
+type = "anime"
+submitters = []
+
+[[media]]
+title = "One Piece"
+type = "manga"                           # experimental: see the README
+submitters = []
+last_chapter = 1100
+deprecated = true                        # archived: kept in the file, not tracked
