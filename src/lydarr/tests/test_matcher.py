@@ -204,6 +204,37 @@ def test_learned_group_offset_is_enforced():
     assert _verdicts(result)[relative] == NEAR
 
 
+def test_a_known_groups_other_season_release_is_still_not_a_match():
+    """Having grabbed Erai-raws' season 3 episodes must not make their '2nd Season - 04' acceptable."""
+    target = _target(submitters = ("Erai-raws",), learned = {"erairaws": 0})
+    torrents = [_torrent(ERAI_S2_HEVC, "2026-10-23 16:00")]
+    result = evaluate(target, torrents, DUE + 6 * HOUR, Policy())
+    assert result.best is None
+    assert result.near[0].reason == "numbered S02E04; expected 4 or 28 or 52"
+
+
+def test_a_known_group_keeps_matching_its_own_season_and_unlabelled_releases():
+    target = _target(submitters = ("Erai-raws",), learned = {"erairaws": 0})
+    unlabelled = "[Erai-raws] Kusuriya no Hitorigoto - 04 [1080p HEVC]"
+    for name in (ERAI_HEVC, unlabelled):
+        result = evaluate(target, [_torrent(name, "2026-10-23 16:00")], DUE + 6 * HOUR, Policy())
+        assert result.best is not None, name
+
+
+def test_a_learned_continuous_numbering_ignores_the_season_label():
+    """A group that writes season 3 as S02E28.. was learned with a non-zero offset; keep accepting it."""
+    target = _target(submitters = (), learned = {"judas": 24})
+    name = "[Judas] Kusuriya no Hitorigoto - S02E28 [1080p][HEVC x265 10bit]"
+    result = evaluate(target, [_torrent(name, "2026-10-23 16:00")], DUE + 6 * HOUR, Policy())
+    assert result.best.offset == 24
+
+
+def test_an_approved_offset_applies_to_groups_with_their_own_learned_numbering():
+    target = _target(prequel_counts = (), learned = {"asw": 0}, extra_offsets = frozenset({48}), submitters = ())
+    result = evaluate(target, [_torrent(ASW_ABS, "2026-10-23 16:27")], DUE + 6 * HOUR, Policy())
+    assert result.best.offset == 48
+
+
 def test_wrong_season_label_this_week_is_a_near_miss_not_a_match():
     late_dub = "[Group] Kusuriya no Hitorigoto 2nd Season - 04 [1080p HEVC][Dual Audio]"
     result = evaluate(_target(submitters = ()), [_torrent(late_dub, "2026-10-24 10:00")], DUE + 30 * HOUR, Policy())

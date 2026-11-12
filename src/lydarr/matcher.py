@@ -150,12 +150,15 @@ def _offset_for(release: Release, target: Target) -> int | None:
 
     for number, season in numbers:
         offset = number - n
-        if learned is not None:
-            if offset == learned:
-                return offset
-            continue
         if offset in extra:
             return offset
+        if learned is not None:
+            # A group known to number this show season-relatively is not excused
+            # from the season label: its "S02E06" is not season 3's episode 6.
+            other_season = season is not None and season not in target.seasons
+            if offset == learned and not (other_season and offset == 0):
+                return offset
+            continue
         if season is not None and season in target.seasons and offset == 0:
             return 0
         if target.offset_override:
