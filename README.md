@@ -2,74 +2,14 @@
 
 "That Time Crunchyroll Ruined My Life, So I Paid Claude $100 To Revive Me?" (クランチロールに人生をぶっ壊された　クロードに１００００円を払っちゃってオレは復活した件）
 
-lydarr watches the anime you follow, waits for each episode to air, finds the right release on Nyaa and hands it to Transmission, saved into the folder you chose for that show. A web UI covers everything: adding shows, a calendar, a torrent browser for picking releases by hand, and a log of what was downloaded.
-
-- [Quick start](#quick-start)
-- [Running it in the background](#running-it-in-the-background)
-- [Using the web UI](#using-the-web-ui)
-- [How an episode is chosen](#how-an-episode-is-chosen)
-- [Configuration](#configuration)
-- [Transmission setup](#transmission-setup)
-- [Troubleshooting](#troubleshooting)
-- [Upgrading from an older checkout](#upgrading-from-an-older-checkout)
-- [Development](#development)
 
 ## Quick start
 
-You need [uv](https://docs.astral.sh/uv/), Python 3.14 (uv installs it for you) and Transmission:
-
 ```bash
-sudo apt install transmission-daemon
-```
-
-Then, in the repository:
-
-```bash
-uv sync                    # install dependencies into .venv
-cp .env.example .env       # then set LYDARR_DEFAULT_DIR and anything else you need
-uv run lydarr              # web UI on http://localhost:8080
-```
-
-Open the page, search for a show under **Add a show**, press **Track**, then press **Start**. From then on lydarr downloads each new episode as it comes out. It remembers that it was started, so after a restart or reboot it carries on by itself.
-
-Other ways to run it:
-
-```bash
-uv run lydarr --host 127.0.0.1 --port 8080   # choose the bind address and port
-uv run lydarr --no-web                       # tracker only, no web UI
-uv run lydarr --log lydarr.log               # also log to a file (rotated at 5 MB)
-uv run lydarr check                          # show what it would download; changes nothing
-uv run lydarr check "apothecary" --episode 4 # one show, one episode, with reasons
-```
-
-## Running it in the background
-
-Use a systemd user service. It starts at boot, restarts after a crash, and keeps logs, none of which a shell job does. (`Ctrl+Z`, `bg`, `disown` leaves the process tied to a terminal that no longer exists, with no restart and no logs.)
-
-```bash
-mkdir -p ~/.config/systemd/user
 cp lydarr.service ~/.config/systemd/user/lydarr.service
-# The unit assumes the repository is at ~/git/lydarr-py. Edit the two paths in it if not.
-
 systemctl --user daemon-reload
 systemctl --user enable --now lydarr
-loginctl enable-linger          # keep it running when you are logged out
-```
-
-Day to day:
-
-```bash
-systemctl --user status lydarr       # is it running?
-systemctl --user restart lydarr      # after pulling new code or editing .env
-journalctl --user -u lydarr -f       # follow the log
-```
-
-Settings come from `.env` in the repository. If you would rather keep them elsewhere, put `KEY=value` lines in `~/.config/lydarr/env`; those win over `.env`. Use absolute paths in either file.
-
-No systemd? This starts it detached from the terminal and logs to a file:
-
-```bash
-setsid nohup uv run lydarr --log lydarr.log >/dev/null 2>&1 &
+loginctl enable-linger
 ```
 
 ## Using the web UI
