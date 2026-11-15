@@ -42,8 +42,9 @@ lydarr-py/
     ├── matcher.py          # evaluate(target, torrents, now, policy) → MatchResult: hard gates, then submitter/HEVC waits, then ranking; near misses for review
     ├── nyaa_search.py      # find_candidates() (one newest-first request per check; numbered queries only for catch-up), search_chapter() for manga
     ├── state.py            # TrackerState: per-episode records, learned offsets, activity log, torrents to reap, tracker on/off; JSON on disk
-    ├── torrent_client.py   # Transmission JSON-RPC: add_magnet() → AddedTorrent, torrent_progress()/remove_torrents() by info hash
-    ├── tracker.py          # Tracker: tick() scheduler, review/approve/skip/retry, manual_add(), preview(), reap(), manga loop
+    ├── torrent_client.py   # Transmission JSON-RPC: add_magnet() → AddedTorrent, torrent_progress() → TorrentStatus, remove_torrents(); all by info hash
+    ├── jellyfin.py         # Jellyfin client: locate() a path's library and show, refresh() an item; to_jellyfin() path mapping
+    ├── tracker.py          # Tracker: tick() scheduler, review/approve/skip/retry, manual_add(), preview(), reap(), scan_jellyfin(), manga loop
     ├── __main__.py         # CLI: `lydarr` (web + tracker), `--no-web`, `lydarr check`
     ├── web/
     │   ├── app.py          # create_app(cfg, state, store=, tstate=, tracker=, resume_tracker=); error handlers; CSP
@@ -54,7 +55,8 @@ lydarr-py/
     │   │   └── daemon.py   # /api/status, /api/daemon/*, /api/transmission/*, /api/power/start|stop
     │   └── static/         # index.html, app.css, js/*.js (ES modules, no build step, no inline scripts)
     └── tests/
-        ├── conftest.py     # autouse fixture that blocks AniList, Nyaa and Transmission
+        ├── conftest.py     # autouse fixture that blocks AniList, Nyaa, Transmission and Jellyfin
+        ├── fake_jellyfin.py # FakeJellyfin: libraries and shows in memory; records scans
         └── webrig.py       # WebRig: a real app over in-memory AniList data, for route tests
 ```
 
@@ -67,6 +69,7 @@ lydarr-py/
 - **Matching is gated, then ranked.** A torrent must be uploaded after the air time (24 h tolerance), be the same series, be a single regular episode, and carry a number that fits (AniList's, or offset by earlier seasons' lengths, a learned per-group offset, or `episode_offset`). Wrong-number releases in the episode's own week become near misses → `review` status → the Activity tab.
 - **One save-path formula.** `paths.resolve_download_dir(cfg, entry, info)`: the entry's `download_dir`, else `LYDARR_DEFAULT_DIR/<AniList display title>`. If the folder cannot be created the add fails and is retried; it never falls back to another folder.
 - **Torrents are identified by info hash**, never by Transmission's session-scoped numeric id.
+- **Finished downloads are scanned into Jellyfin.** `Tracker.housekeeping()` runs `reap()` and `scan_jellyfin()` every 30 s, tracker on or off. When `JELLYFIN_URL` and `JELLYFIN_API_KEY` are set, `reap()` lines up each completed torrent's path (Transmission's `downloadDir/name`) in memory, and `scan_jellyfin()` refreshes the Jellyfin show whose folder holds it `SCAN_DELAY` later (its library for a show Jellyfin does not list yet), once per show. It sends the request once and does not check the result; failures are only logged. lydarr never sends Jellyfin a path; `jellyfin.to_jellyfin()` translates lydarr's path to Jellyfin's view (`JELLYFIN_PATH_MAP`, else the same path, else folder names lined up with a library folder).
 
 ---
 
@@ -81,6 +84,7 @@ lydarr-py/
 | Fuzzy title match | `rapidfuzz` | Release title vs AniList names in the matcher |
 | Torrent client | Transmission JSON-RPC | Lightweight, no extra binary |
 | Transmission start/stop | `systemctl` on a configurable unit | The UI controls the daemon's lifetime |
+| Jellyfin | `POST /Items/{id}/Refresh` on the show, `SCAN_DELAY` after Transmission finishes; no follow-up check | Same scan as Jellyfin's own UI, scoped to one show; the delay lets an rclone mount upload the file first |
 | Watchlist format | TOML (`anime.toml`) | Human-editable; holds configuration only |
 | Runtime state | JSON next to the watchlist | History and cache kept out of the hand-edited file |
 | Web framework | FastAPI | Async-native, minimal |

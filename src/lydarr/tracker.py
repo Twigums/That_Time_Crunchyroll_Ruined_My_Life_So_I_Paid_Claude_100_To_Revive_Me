@@ -5,6 +5,9 @@ the episodes that have aired (plus their check delay) and are not settled yet,
 and checks each on its own retry timer. A release that never appears therefore
 cannot hold up later episodes, and anything that aired while lydarr was stopped
 is picked up on the next start.
+
+A housekeeping loop clears finished torrents out of Transmission and, when
+Jellyfin is configured, asks it to scan the shows they belong to.
 """
 import asyncio
 import logging
@@ -14,6 +17,8 @@ import time
 from anilist.types import AnilistError, AnilistMedia, MediaStatus
 from lydarr.config import AppConfig
 from lydarr.file_manager import MediaEntry, MediaState
+from lydarr.jellyfin import JellyfinError
+from lydarr.jellyfin import from_config as jellyfin_from_config
 from lydarr.matcher import (
     EARLY_TOLERANCE, Candidate, MatchResult, Policy, Target,
     accepted_numbers, evaluate, expected_seasons, fits, group_key, in_episode_window,
@@ -39,6 +44,7 @@ ADD_RETRY = 300
 NYAA_PAUSE = 1.0
 MANGA_POLL = 24 * 3600
 MANGA_RETRY = 30 * 60
+SCAN_DELAY = 2 * 60  # an rclone mount uploads a file only once Transmission has closed it
 
 
 def _log(name: str, msg: str) -> None:
@@ -95,6 +101,7 @@ class Tracker:
         self._listings: dict[str, list[Torrent]] = {}
         self._nyaa_calls = 0
         self._reap_failing = False
+        self._jellyfin_due: list[tuple[float, str]] = []
 
     @property
     def policy(self) -> Policy:
@@ -124,13 +131,14 @@ class Tracker:
             _logger.info("Tracker stopped.")
 
     async def housekeeping(self) -> None:
-        """Runs whether or not the tracker does, so hand-added torrents are cleaned up too."""
+        """Runs whether or not the tracker does, so hand-added torrents are cleaned up and scanned in too."""
         while True:
             await asyncio.sleep(REAP_SECONDS)
-            try:
-                await self.reap()
-            except Exception:
-                _logger.exception("Housekeeping pass failed; continuing.")
+            for step in (self.reap, self.scan_jellyfin):
+                try:
+                    await step()
+                except Exception:
+                    _logger.exception("Housekeeping pass failed; continuing.")
 
     async def tick(self, now: float | None = None) -> None:
         now = time.time() if now is None else now
@@ -418,8 +426,8 @@ class Tracker:
 
     # ── finished torrents ─────────────────────────────────────────────────
 
-    async def reap(self) -> None:
-        """Drop completed torrents from Transmission's list (the files stay)."""
+    async def reap(self, now: float | None = None) -> None:
+        """Drop completed torrents from Transmission's list (the files stay) and line up Jellyfin scans."""
         hashes = self.tstate.reap_hashes()
         if not hashes:
             return
@@ -431,15 +439,44 @@ class Tracker:
                 _logger.info("Transmission unreachable; %d torrent(s) will be tidied once it is back.", len(hashes))
             return
         self._reap_failing = False
-        done = [h for h in hashes if progress.get(h, 0.0) >= 1.0]
+        done = [h for h in hashes if h in progress and progress[h].done >= 1.0]
         gone = [h for h in hashes if h not in progress]
         if done and not await remove_torrents(url, user, password, done):
             done = []
         if done:
             _logger.info("Removed %d completed torrent(s) from Transmission; files kept.", len(done))
+            if self.cfg.jellyfin_enabled:
+                due = (time.time() if now is None else now) + SCAN_DELAY
+                self._jellyfin_due += [
+                    (due, os.path.join(progress[h].download_dir, progress[h].name))
+                    for h in done if progress[h].download_dir
+                ]
         if done or gone:
             self.tstate.unwatch(done + gone)
             await self.tstate.save()
+
+    async def scan_jellyfin(self, now: float | None = None) -> None:
+        """Ask Jellyfin to scan the shows that finished downloads landed in, once each."""
+        now = time.time() if now is None else now
+        paths = [path for at, path in self._jellyfin_due if at <= now]
+        jellyfin = jellyfin_from_config(self.cfg)
+        if not paths or jellyfin is None:
+            return
+        self._jellyfin_due = [(at, path) for at, path in self._jellyfin_due if at > now]
+        try:
+            targets: dict[str, str] = {}
+            for path in paths:
+                place = await jellyfin.locate(path)
+                target = place.show or place.library
+                if target is None:
+                    _logger.warning("Jellyfin: no library holds %s; see JELLYFIN_PATH_MAP.", place.path or path)
+                else:
+                    targets[target.id] = target.name
+            for item_id, name in targets.items():
+                await jellyfin.refresh(item_id)
+                _logger.info("Asked Jellyfin to scan %s.", name)
+        except JellyfinError as exc:
+            _logger.warning("Jellyfin: %s; its next library scan will pick the new files up.", exc)
 
     # ── used by the web UI and the CLI ────────────────────────────────────
 

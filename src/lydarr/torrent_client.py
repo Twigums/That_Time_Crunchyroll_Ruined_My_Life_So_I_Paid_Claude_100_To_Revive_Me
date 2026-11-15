@@ -21,6 +21,13 @@ class AddedTorrent:
     duplicate: bool = False
 
 
+@dataclass(frozen = True)
+class TorrentStatus:
+    done: float                      # fraction of the wanted data downloaded, 0 to 1
+    name: str = ""                   # the torrent's file, or the folder holding its files
+    download_dir: str = ""           # the folder `name` sits in
+
+
 async def _rpc(url: str, user: str | None, password: str | None, method: str,
                arguments: dict | None = None, timeout: float = 10) -> httpx.Response:
     global _session_id
@@ -92,8 +99,8 @@ async def add_magnet(url: str, user: str | None, password: str | None, magnet: s
 
 
 async def torrent_progress(url: str, user: str | None, password: str | None,
-                           hashes: list[str]) -> dict[str, float] | None:
-    """Fraction complete for each of the given torrents Transmission still has; None if unreachable.
+                           hashes: list[str]) -> dict[str, TorrentStatus] | None:
+    """How far along each of the given torrents Transmission still has is; None if unreachable.
 
     Torrents are addressed by info hash: Transmission's numeric ids are reassigned
     every time it restarts, so an id remembered from earlier may name another torrent.
@@ -103,12 +110,19 @@ async def torrent_progress(url: str, user: str | None, password: str | None,
     try:
         r = await _rpc(url, user, password, "torrent-get", {
             "ids": list(hashes),
-            "fields": ["hashString", "percentDone"],
+            "fields": ["hashString", "percentDone", "name", "downloadDir"],
         })
         if r.status_code != 200:
             return None
         torrents = r.json().get("arguments", {}).get("torrents", [])
-        return {str(t.get("hashString", "")).lower(): float(t.get("percentDone", 0)) for t in torrents}
+        return {
+            str(t.get("hashString", "")).lower(): TorrentStatus(
+                done = float(t.get("percentDone", 0)),
+                name = str(t.get("name") or ""),
+                download_dir = str(t.get("downloadDir") or ""),
+            )
+            for t in torrents
+        }
     except Exception:
         return None
 

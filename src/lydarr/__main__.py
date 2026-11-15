@@ -12,6 +12,8 @@ from logging.handlers import RotatingFileHandler
 
 from lydarr.config import AppConfig, load_config
 from lydarr.file_manager import MediaEntry, MediaState, WatchlistError, read_entries
+from lydarr.jellyfin import Jellyfin, JellyfinError
+from lydarr.jellyfin import from_config as jellyfin_from_config
 from lydarr.media_store import MediaStore
 from lydarr.paths import resolve_download_dir
 from lydarr.state import TrackerState
@@ -55,6 +57,10 @@ async def _serve(cfg: AppConfig, host: str, port: int, web: bool) -> None:
     state, store, tstate, tracker = _services(cfg, entries)
     _logger.info("Watchlist: %s (%d entries). Downloads go under %s unless an entry sets its own path.",
                  cfg.anime_file, len(entries), cfg.default_dir)
+    if cfg.jellyfin_enabled:
+        _logger.info("Finished downloads will be scanned into Jellyfin at %s.", cfg.jellyfin_url)
+    elif cfg.jellyfin_url:
+        _logger.warning("JELLYFIN_URL is set but JELLYFIN_API_KEY is not; Jellyfin will not be told about downloads.")
 
     if not web:
         _logger.info("Running without the web UI.")
@@ -78,6 +84,36 @@ async def _serve(cfg: AppConfig, host: str, port: int, web: bool) -> None:
 
 def _local(ts: float) -> str:
     return datetime.fromtimestamp(ts).astimezone().strftime("%a %Y-%m-%d %H:%M %Z")
+
+
+async def _jellyfin_check(cfg: AppConfig) -> Jellyfin | None:
+    """Print Jellyfin's libraries, and return a client for per-entry lookups if it answered."""
+    jellyfin = jellyfin_from_config(cfg)
+    if jellyfin is None:
+        return None
+    try:
+        libraries = await jellyfin.libraries()
+    except JellyfinError as exc:
+        print(f"! Jellyfin: {exc}\n")
+        return None
+    print(f"Jellyfin at {cfg.jellyfin_url}")
+    for library in libraries:
+        print(f"    library   {library.name}: {', '.join(library.locations) or '(no folders)'}")
+    for local, remote in cfg.jellyfin_path_map:
+        print(f"    path map  {local} -> {remote}")
+    print()
+    return jellyfin
+
+
+async def _jellyfin_line(jellyfin: Jellyfin, path: str) -> str:
+    try:
+        place = await jellyfin.locate(path)
+    except JellyfinError as exc:
+        return f"lookup failed ({exc})"
+    if place.library is None:
+        return f"no library holds {place.path or path}; see JELLYFIN_PATH_MAP"
+    show = place.show.name if place.show else "(new show)"
+    return f"{place.library.name} / {show}: {place.path}"
 
 
 async def _check(cfg: AppConfig, title: str | None, episode: int | None) -> int:
@@ -104,6 +140,7 @@ async def _check(cfg: AppConfig, title: str | None, episode: int | None) -> int:
 
         if not await store.refresh():
             print(f"! AniList: {store.status()['error']} (showing cached data)\n")
+        jellyfin = await _jellyfin_check(cfg)
 
         now = time.time()
         for entry in state.entries():
@@ -112,8 +149,11 @@ async def _check(cfg: AppConfig, title: str | None, episode: int | None) -> int:
             if info is None:
                 print("    not found on AniList\n")
                 continue
+            save_path = resolve_download_dir(cfg, entry, info)
             print(f"    AniList   #{info.id} {info.display_title()} ({info.status.value.lower()})")
-            print(f"    saves to  {resolve_download_dir(cfg, entry, info)}")
+            print(f"    saves to  {save_path}")
+            if jellyfin is not None:
+                print(f"    jellyfin  {await _jellyfin_line(jellyfin, save_path)}")
             upcoming = store.next_episode(entry, now)
             if upcoming:
                 print(f"    next      ep {upcoming[0]:02d} airs {_local(upcoming[1])}")

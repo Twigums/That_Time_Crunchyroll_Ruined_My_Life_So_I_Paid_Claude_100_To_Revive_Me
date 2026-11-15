@@ -94,6 +94,9 @@ Set these in `.env` (see `.env.example`) or in the environment.
 | `LYDARR_LOG_FILE` | unset | Also log to this file (`--log` overrides) |
 | `LYDARR_STATE_FILE` | next to the watchlist | Download history and tracker state |
 | `LYDARR_CACHE_FILE` | next to the watchlist | AniList cache |
+| `JELLYFIN_URL` | unset | Jellyfin server, e.g. `http://jellyfin:8096`; unset turns the [Jellyfin](#jellyfin) step off |
+| `JELLYFIN_API_KEY` | unset | API key from Jellyfin's *Dashboard → API Keys* |
+| `JELLYFIN_PATH_MAP` | detected | `lydarr path=Jellyfin path`, several separated by `;`, when Jellyfin sees the downloads elsewhere |
 
 Without `LYDARR_USER`, anyone who can reach the page can add torrents and change save paths. Set a password, or bind to `127.0.0.1`, unless the network is one you trust.
 
@@ -175,6 +178,25 @@ Finished torrents are removed from Transmission's list once complete; the files 
 
 Otherwise Transmission downloads to `name.mkv.part` and renames at the end, which rclone's FUSE layer does not support, and the transfer fails with an I/O error.
 
+## Jellyfin
+
+When Transmission finishes a download, lydarr can ask Jellyfin to scan the show it belongs to, so the episode appears without waiting for Jellyfin's next library scan. Create an API key under *Dashboard → API Keys* in Jellyfin, then set:
+
+```bash
+JELLYFIN_URL=http://jellyfin:8096
+JELLYFIN_API_KEY=0123456789abcdef0123456789abcdef
+```
+
+Two minutes after a download finishes, lydarr finds the Jellyfin show whose folder holds the file and asks Jellyfin to scan it, the same as *Scan for new and updated files* in Jellyfin's own menu. A show Jellyfin does not list yet gets its whole library scanned instead. The two minutes give an rclone mount time to upload the file, which it only starts once Transmission has closed it. lydarr sends the request once and does not check the result; if Jellyfin cannot be reached, the log says so and Jellyfin's next library scan picks the file up.
+
+**Paths.** Jellyfin often sees the same files under another folder: `/home/me/media/Jellyfin/Anime` on this machine might be `/media/Jellyfin/Anime` inside Jellyfin's container. lydarr lines the two up by folder names, so a library folder ending in `Jellyfin/Anime` matches the `Jellyfin/Anime` part of the download path. When the names differ, or two libraries match equally well, give the mapping as `lydarr path=Jellyfin path`, separating several pairs with `;`:
+
+```bash
+JELLYFIN_PATH_MAP=/home/me/media/Jellyfin=/media/Jellyfin
+```
+
+`uv run lydarr check "title"` lists Jellyfin's library folders and, for each show, the Jellyfin show and folder its downloads land in. It never asks Jellyfin to scan.
+
 ## Troubleshooting
 
 | Symptom | What to check |
@@ -184,6 +206,7 @@ Otherwise Transmission downloads to `name.mkv.part` and renames at the end, whic
 | The header says **AniList unavailable** | AniList is down or rate limiting. Nothing to do; cached data is used and it retries by itself. |
 | An episode landed in the wrong folder | Check the show's *Save path*, and that **Save to** named that show when you added a torrent by hand. The Activity log records where each torrent went. |
 | **Transmission did not accept the torrent** | Transmission is not running, or the save path is not writable by its user. |
+| A new episode does not show up in Jellyfin | Check the log. *No library holds…* means the download path did not line up with a Jellyfin library folder: set `JELLYFIN_PATH_MAP` (`uv run lydarr check` lists Jellyfin's folders). *Asked Jellyfin to scan…* means the request went through: check that Jellyfin can read the folder and recognises the file name. |
 | The Start button reports a systemctl error | `LYDARR_TRANSMISSION_UNIT` / `LYDARR_TRANSMISSION_SCOPE` do not match how Transmission is installed. |
 | The service will not start | `journalctl --user -u lydarr -n 50`. A wrong path in the unit file is the usual cause. |
 
@@ -211,6 +234,7 @@ src/lydarr/
   media_store.py     disk-backed AniList cache shared by everything
   state.py           download history, activity log, tracker state
   tracker.py         the episode queue
+  jellyfin.py        asks Jellyfin to scan finished downloads in
   web/               FastAPI app, routes and the static UI
 ```
 
