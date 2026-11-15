@@ -19,6 +19,7 @@ REVIEW = "review"
 MISSED = "missed"
 SKIPPED = "skipped"
 SETTLED = (GRABBED, MISSED, SKIPPED)
+ADDED_KINDS = ("grabbed", "approved", "manual")
 
 ACTIVITY_LIMIT = 500
 _STATE_VERSION = 1
@@ -45,6 +46,18 @@ class ShowState:
     extra_offsets: list[int] = field(default_factory = list)
     completed_at: float = 0.0
     episodes: dict[int, EpisodeRecord] = field(default_factory = dict)
+
+
+@dataclass
+class Arrival:
+    """A finished download that Jellyfin has not been seen to list yet."""
+    hash: str = ""
+    title: str = ""
+    episode: int | None = None
+    path: str = ""                   # the finished file, or folder of files, as lydarr sees it
+    since: float = 0.0               # when Transmission finished it
+    scans: int = 0                   # scans asked of Jellyfin so far
+    next_at: float = 0.0
 
 
 def _show_from_dict(raw: dict) -> ShowState:
@@ -77,6 +90,7 @@ class TrackerState:
         self.enabled = False
         self._shows: dict[str, ShowState] = {}
         self._reap: list[str] = []
+        self._arrivals: list[Arrival] = []
         self._activity: list[dict] = []
         self._next_id = 1
 
@@ -95,6 +109,10 @@ class TrackerState:
             self.enabled = bool(raw.get("tracker_enabled", False))
             self._shows = {title: _show_from_dict(show) for title, show in (raw.get("shows") or {}).items()}
             self._reap = [str(h) for h in raw.get("reap") or []]
+            self._arrivals = [
+                Arrival(**{k: v for k, v in a.items() if k in Arrival.__dataclass_fields__})
+                for a in raw.get("arrivals") or [] if isinstance(a, dict) and a.get("hash")
+            ]
             self._activity = list(raw.get("activity") or [])
             self._next_id = 1 + max((int(a.get("id", 0)) for a in self._activity), default = 0)
         except (TypeError, ValueError) as exc:
@@ -110,6 +128,7 @@ class TrackerState:
                 for title, show in self._shows.items()
             },
             "reap": self._reap,
+            "arrivals": [asdict(a) for a in self._arrivals],
             "activity": self._activity,
         }
 
@@ -169,6 +188,17 @@ class TrackerState:
         gone = set(hashes)
         self._reap = [h for h in self._reap if h not in gone]
 
+    # ── finished downloads to see into Jellyfin ───────────────────────────
+
+    def arrivals(self) -> list[Arrival]:
+        return list(self._arrivals)
+
+    def arrive(self, arrival: Arrival) -> None:
+        self._arrivals = [a for a in self._arrivals if a.hash != arrival.hash] + [arrival]
+
+    def settle_arrival(self, info_hash: str) -> None:
+        self._arrivals = [a for a in self._arrivals if a.hash != info_hash]
+
     # ── activity log ──────────────────────────────────────────────────────
 
     def log(self, kind: str, title: str, episode: int | None = None, *, name: str = "",
@@ -192,3 +222,10 @@ class TrackerState:
 
     def activity(self, limit: int = 200) -> list[dict]:
         return list(reversed(self._activity[-limit:]))
+
+    def added(self, info_hash: str) -> dict | None:
+        """The latest record of lydarr adding this torrent, if the log still holds it."""
+        return next(
+            (e for e in reversed(self._activity) if e.get("hash") == info_hash and e.get("kind") in ADDED_KINDS),
+            None,
+        )

@@ -5,6 +5,9 @@ the episodes that have aired (plus their check delay) and are not settled yet,
 and checks each on its own retry timer. A release that never appears therefore
 cannot hold up later episodes, and anything that aired while lydarr was stopped
 is picked up on the next start.
+
+A housekeeping loop clears finished torrents out of Transmission and, when
+Jellyfin is configured, has it scan them in and checks that they show up.
 """
 import asyncio
 import logging
@@ -14,6 +17,8 @@ import time
 from anilist.types import AnilistError, AnilistMedia, MediaStatus
 from lydarr.config import AppConfig
 from lydarr.file_manager import MediaEntry, MediaState
+from lydarr.jellyfin import Jellyfin, JellyfinError
+from lydarr.jellyfin import from_config as jellyfin_from_config
 from lydarr.matcher import (
     EARLY_TOLERANCE, Candidate, MatchResult, Policy, Target,
     accepted_numbers, evaluate, expected_seasons, fits, group_key, in_episode_window,
@@ -22,8 +27,10 @@ from lydarr.media_store import MediaStore
 from lydarr.nyaa_search import clean_query, find_candidates, search_chapter
 from lydarr.paths import resolve_download_dir, safe_dirname
 from lydarr.release import Release, parse_release, split_season
-from lydarr.state import GRABBED, MISSED, PENDING, REVIEW, SETTLED, SKIPPED, EpisodeRecord, ShowState, TrackerState
-from lydarr.torrent_client import AddedTorrent, add_magnet, remove_torrents, torrent_progress
+from lydarr.state import (
+    GRABBED, MISSED, PENDING, REVIEW, SETTLED, SKIPPED, Arrival, EpisodeRecord, ShowState, TrackerState,
+)
+from lydarr.torrent_client import AddedTorrent, TorrentStatus, add_magnet, remove_torrents, torrent_progress
 from nyaa.parser._utils import magnet_hash
 from nyaa.types import NyaaError, Torrent
 
@@ -39,6 +46,9 @@ ADD_RETRY = 300
 NYAA_PAUSE = 1.0
 MANGA_POLL = 24 * 3600
 MANGA_RETRY = 30 * 60
+ANNOUNCE_DELAY = 60  # seconds between Transmission finishing and the first Jellyfin scan
+SCAN_WAITS = (2 * 60, 5 * 60, 15 * 60, 30 * 60, 60 * 60)  # after each scan, how long until looking for the file
+JELLYFIN_RETRY = 5 * 60
 
 
 def _log(name: str, msg: str) -> None:
@@ -62,6 +72,10 @@ def retry_interval(elapsed: float) -> int:
     if elapsed < 48 * 3600:
         return 3600
     return 6 * 3600
+
+
+def _arrival_label(arrival: Arrival) -> str:
+    return f"Ep {_pad(arrival.episode)}" if arrival.episode is not None else os.path.basename(arrival.path)
 
 
 def candidate_dict(c: Candidate) -> dict:
@@ -95,6 +109,8 @@ class Tracker:
         self._listings: dict[str, list[Torrent]] = {}
         self._nyaa_calls = 0
         self._reap_failing = False
+        self._jellyfin_wait = 0.0
+        self._jellyfin_problem = ""
 
     @property
     def policy(self) -> Policy:
@@ -124,13 +140,14 @@ class Tracker:
             _logger.info("Tracker stopped.")
 
     async def housekeeping(self) -> None:
-        """Runs whether or not the tracker does, so hand-added torrents are cleaned up too."""
+        """Runs whether or not the tracker does, so hand-added torrents are cleaned up and announced too."""
         while True:
             await asyncio.sleep(REAP_SECONDS)
-            try:
-                await self.reap()
-            except Exception:
-                _logger.exception("Housekeeping pass failed; continuing.")
+            for step in (self.reap, self.announce):
+                try:
+                    await step()
+                except Exception:
+                    _logger.exception("Housekeeping pass failed; continuing.")
 
     async def tick(self, now: float | None = None) -> None:
         now = time.time() if now is None else now
@@ -418,8 +435,8 @@ class Tracker:
 
     # ── finished torrents ─────────────────────────────────────────────────
 
-    async def reap(self) -> None:
-        """Drop completed torrents from Transmission's list (the files stay)."""
+    async def reap(self, now: float | None = None) -> None:
+        """Drop completed torrents from Transmission's list (the files stay) and queue them for Jellyfin."""
         hashes = self.tstate.reap_hashes()
         if not hashes:
             return
@@ -431,15 +448,97 @@ class Tracker:
                 _logger.info("Transmission unreachable; %d torrent(s) will be tidied once it is back.", len(hashes))
             return
         self._reap_failing = False
-        done = [h for h in hashes if progress.get(h, 0.0) >= 1.0]
+        done = [h for h in hashes if h in progress and progress[h].done >= 1.0]
         gone = [h for h in hashes if h not in progress]
         if done and not await remove_torrents(url, user, password, done):
             done = []
         if done:
             _logger.info("Removed %d completed torrent(s) from Transmission; files kept.", len(done))
+            if self.cfg.jellyfin_enabled:
+                now = time.time() if now is None else now
+                for info_hash in done:
+                    self._queue_arrival(info_hash, progress[info_hash], now)
         if done or gone:
             self.tstate.unwatch(done + gone)
             await self.tstate.save()
+
+    def _queue_arrival(self, info_hash: str, status: TorrentStatus, now: float) -> None:
+        if not (status.download_dir and status.name):
+            return
+        added = self.tstate.added(info_hash) or {}
+        title = added.get("title") or status.name
+        entry = self.media_state.get(title)
+        if entry is not None and entry.media_type == "manga":
+            return
+        self.tstate.arrive(Arrival(
+            hash = info_hash, title = title, episode = added.get("episode"),
+            path = os.path.join(status.download_dir, status.name),
+            since = now, next_at = now + ANNOUNCE_DELAY,
+        ))
+
+    # ── Jellyfin ──────────────────────────────────────────────────────────
+
+    async def announce(self, now: float | None = None) -> None:
+        """Have Jellyfin scan where finished downloads landed, and check that each one shows up."""
+        jellyfin = jellyfin_from_config(self.cfg)
+        if jellyfin is None or not self.tstate.arrivals():
+            return
+        now = time.time() if now is None else now
+        changed = False
+        for arrival in self.tstate.arrivals():
+            if now - arrival.since > GIVE_UP_AFTER:
+                self._unlisted(arrival, f"no answer from Jellyfin for {GIVE_UP_AFTER // 86400} days", now)
+                changed = True
+        due = [a for a in self.tstate.arrivals() if a.next_at <= now]
+        if due and now >= self._jellyfin_wait:
+            scanned: set[str] = set()
+            try:
+                for arrival in due:
+                    await self._announce(jellyfin, arrival, scanned, now)
+                    changed = True
+            except JellyfinError as exc:
+                self._jellyfin_wait = now + JELLYFIN_RETRY
+                if str(exc) != self._jellyfin_problem:
+                    self._jellyfin_problem = str(exc)
+                    _logger.warning("Jellyfin: %s. %d finished download(s) will be announced once it answers.",
+                                    exc, len(self.tstate.arrivals()))
+            else:
+                if self._jellyfin_problem:
+                    self._jellyfin_problem = ""
+                    _logger.info("Jellyfin is answering again.")
+        if changed:
+            await self.tstate.save()
+
+    async def _announce(self, jellyfin: Jellyfin, arrival: Arrival, scanned: set[str], now: float) -> None:
+        place = await jellyfin.locate(arrival.path)
+        if place.library is None:
+            where = place.path or arrival.path
+            self._unlisted(arrival, f"no Jellyfin library holds {where}; see JELLYFIN_PATH_MAP", now)
+            return
+        if arrival.scans:
+            found = await jellyfin.find(place)
+            if found is not None:
+                self.tstate.settle_arrival(arrival.hash)
+                self.tstate.log("in_jellyfin", arrival.title, arrival.episode, info_hash = arrival.hash,
+                                directory = found.path, detail = f"listed as {found.label()}", now = now)
+                _log(arrival.title, f"{_arrival_label(arrival)}: in Jellyfin as {found.label()}.")
+                return
+            if arrival.scans >= len(SCAN_WAITS):
+                self._unlisted(arrival, f"not listed after {arrival.scans} scans; looked for {place.path}", now)
+                return
+        target = place.show or place.library
+        if target.id not in scanned:
+            await jellyfin.refresh(target.id)
+            scanned.add(target.id)
+            _log(arrival.title, f"{_arrival_label(arrival)}: asked Jellyfin to scan {target.name}.")
+        arrival.scans += 1
+        arrival.next_at = now + SCAN_WAITS[arrival.scans - 1]
+
+    def _unlisted(self, arrival: Arrival, reason: str, now: float) -> None:
+        self.tstate.settle_arrival(arrival.hash)
+        self.tstate.log("not_in_jellyfin", arrival.title, arrival.episode, info_hash = arrival.hash,
+                        detail = reason, now = now)
+        _log(arrival.title, f"{_arrival_label(arrival)}: not in Jellyfin; {reason}.")
 
     # ── used by the web UI and the CLI ────────────────────────────────────
 

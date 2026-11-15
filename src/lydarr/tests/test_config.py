@@ -64,3 +64,28 @@ def test_app_config_is_dataclass():
     )
     assert cfg.anime_file == "test.toml"
     assert cfg.transmission_user is None
+
+
+def test_jellyfin_is_off_until_both_url_and_key_are_set():
+    with patch.dict("os.environ", {}, clear = True):
+        cfg = load_config()
+    assert (cfg.jellyfin_url, cfg.jellyfin_api_key, cfg.jellyfin_path_map) == ("", "", [])
+    assert cfg.jellyfin_enabled is False
+
+    with patch.dict("os.environ", {"JELLYFIN_URL": "http://jellyfin:8096/"}, clear = True):
+        assert load_config().jellyfin_enabled is False
+
+    env = {"JELLYFIN_URL": " http://jellyfin:8096/ ", "JELLYFIN_API_KEY": " abc123 "}
+    with patch.dict("os.environ", env, clear = True):
+        cfg = load_config()
+    assert (cfg.jellyfin_url, cfg.jellyfin_api_key, cfg.jellyfin_enabled) == ("http://jellyfin:8096", "abc123", True)
+
+
+def test_jellyfin_path_map_pairs():
+    raw = " ~/media/Anime = /media/Anime ;/mnt/a=/a=b;;junk;=/nothing;/empty= "
+    with patch.dict("os.environ", {"JELLYFIN_PATH_MAP": raw}, clear = True):
+        cfg = load_config()
+    assert cfg.jellyfin_path_map == [
+        (str(Path.home() / "media" / "Anime"), "/media/Anime"),
+        ("/mnt/a", "/a=b"),
+    ]

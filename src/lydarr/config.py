@@ -1,6 +1,6 @@
 """Configuration loaded from environment variables."""
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,6 +27,9 @@ class AppConfig:
     prefer_hevc: bool = True
     resolution: int = 1080
     log_file: str | None = None
+    jellyfin_url: str = ""
+    jellyfin_api_key: str = ""
+    jellyfin_path_map: list[tuple[str, str]] = field(default_factory = list)
 
     def __post_init__(self) -> None:
         base = os.path.dirname(os.path.abspath(self.anime_file))
@@ -34,6 +37,10 @@ class AppConfig:
             self.state_file = os.path.join(base, "lydarr-state.json")
         if not self.cache_file:
             self.cache_file = os.path.join(base, "lydarr-cache.json")
+
+    @property
+    def jellyfin_enabled(self) -> bool:
+        return bool(self.jellyfin_url and self.jellyfin_api_key)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -60,6 +67,16 @@ def _env_flag(name: str, default: bool) -> bool:
 def _env_path(name: str) -> str:
     raw = os.environ.get(name)
     return str(Path(raw).expanduser()) if raw else ""
+
+
+def _env_path_map(name: str) -> list[tuple[str, str]]:
+    """`lydarr path=other path` pairs separated by `;`, e.g. `~/media=/media;/mnt/a=/a`."""
+    pairs = []
+    for chunk in (os.environ.get(name) or "").split(";"):
+        local, sep, remote = chunk.partition("=")
+        if sep and local.strip() and remote.strip():
+            pairs.append((str(Path(local.strip()).expanduser()), remote.strip()))
+    return pairs
 
 
 def load_config() -> AppConfig:
@@ -89,4 +106,7 @@ def load_config() -> AppConfig:
         prefer_hevc = _env_flag("LYDARR_PREFER_HEVC", True),
         resolution = _env_int("LYDARR_RESOLUTION", 1080),
         log_file = _env_path("LYDARR_LOG_FILE") or None,
+        jellyfin_url = (os.environ.get("JELLYFIN_URL") or "").strip().rstrip("/"),
+        jellyfin_api_key = (os.environ.get("JELLYFIN_API_KEY") or "").strip(),
+        jellyfin_path_map = _env_path_map("JELLYFIN_PATH_MAP"),
     )

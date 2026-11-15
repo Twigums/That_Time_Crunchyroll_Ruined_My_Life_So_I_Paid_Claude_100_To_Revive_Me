@@ -10,10 +10,11 @@ from lydarr.config import AppConfig
 from lydarr.file_manager import MediaEntry, MediaState
 from lydarr.media_store import MediaStore
 from lydarr.state import GRABBED, MISSED, PENDING, REVIEW, SKIPPED, TrackerState
-from lydarr.torrent_client import AddedTorrent
+from lydarr.tests.fake_jellyfin import KEY, URL, FakeJellyfin
+from lydarr.torrent_client import AddedTorrent, TorrentStatus
 from lydarr.tracker import (
-    ADD_RETRY, DEFAULT_CHECK_DELAY, GIVE_UP_AFTER, MANGA_POLL, MANGA_RETRY, MAX_CHECKS_PER_TICK,
-    Tracker, _log, _pad, retry_interval,
+    ADD_RETRY, ANNOUNCE_DELAY, DEFAULT_CHECK_DELAY, GIVE_UP_AFTER, JELLYFIN_RETRY, MANGA_POLL, MANGA_RETRY,
+    MAX_CHECKS_PER_TICK, SCAN_WAITS, Tracker, _log, _pad, retry_interval,
 )
 from nyaa.types import HttpError, Torrent, TorrentType
 
@@ -527,12 +528,13 @@ async def test_reap_removes_completed_and_forgets_vanished_torrents(tmp_path):
         rig.tstate.watch(h)
 
     with patch("lydarr.tracker.torrent_progress", new_callable = AsyncMock,
-               return_value = {"done": 1.0, "half": 0.5}), \
+               return_value = {"done": TorrentStatus(1.0), "half": TorrentStatus(0.5)}), \
          patch("lydarr.tracker.remove_torrents", new_callable = AsyncMock, return_value = True) as remove:
         await rig.tracker.reap()
 
     assert remove.await_args.args[3] == ["done"]
     assert rig.tstate.reap_hashes() == ["half"]
+    assert rig.tstate.arrivals() == []
 
 
 @pytest.mark.asyncio
@@ -554,10 +556,231 @@ async def test_reap_waits_quietly_while_transmission_is_down(tmp_path, caplog):
 async def test_reap_keeps_watching_when_removal_fails(tmp_path):
     rig = Rig(tmp_path, [], {})
     rig.tstate.watch("done")
-    with patch("lydarr.tracker.torrent_progress", new_callable = AsyncMock, return_value = {"done": 1.0}), \
+    with patch("lydarr.tracker.torrent_progress", new_callable = AsyncMock,
+               return_value = {"done": TorrentStatus(1.0)}), \
          patch("lydarr.tracker.remove_torrents", new_callable = AsyncMock, return_value = False):
         await rig.tracker.reap()
     assert rig.tstate.reap_hashes() == ["done"]
+
+
+# ── Jellyfin ─────────────────────────────────────────────────────────────────
+
+EP4_FILE = "[SubsPlease] Shou S2 - 04 (1080p HEVC) [AAAAAAAA].mkv"
+EP5_FILE = "[SubsPlease] Shou S2 - 05 (1080p HEVC) [BBBBBBBB].mkv"
+
+
+def _jellyfin(rig: Rig, tmp_path, *, libraries: dict | None = None, path_map: list | None = None) -> FakeJellyfin:
+    rig.cfg.jellyfin_url, rig.cfg.jellyfin_api_key = URL, KEY
+    rig.cfg.jellyfin_path_map = list(path_map or [])
+    return FakeJellyfin({"Anime": [str(tmp_path / "library")]} if libraries is None else libraries)
+
+
+async def _finish(rig: Rig, info_hash: str, folder, name: str, *, episode: int | None = 4,
+                  title: str = "The Show Season 2", logged: bool = True) -> None:
+    """Transmission finishes a torrent lydarr added for `title`."""
+    rig.tstate.watch(info_hash)
+    if logged:
+        rig.tstate.log("grabbed", title, episode, name = name, info_hash = info_hash, directory = str(folder), now = NOW)
+    status = TorrentStatus(done = 1.0, name = name, download_dir = str(folder))
+    with patch("lydarr.tracker.torrent_progress", new_callable = AsyncMock, return_value = {info_hash: status}), \
+         patch("lydarr.tracker.remove_torrents", new_callable = AsyncMock, return_value = True):
+        await rig.tracker.reap(now = NOW)
+
+
+async def _announce_until_done(rig: Rig, jf: FakeJellyfin, limit: int = 10) -> list[float]:
+    """Run each announcement when it falls due until none are left; returns when they ran."""
+    times = []
+    with patch("lydarr.jellyfin._request", jf):
+        while rig.tstate.arrivals() and len(times) < limit:
+            times.append(min(a.next_at for a in rig.tstate.arrivals()))
+            await rig.tracker.announce(times[-1])
+    return times
+
+
+def _show_rig(tmp_path, **jellyfin) -> tuple[Rig, FakeJellyfin, str, object]:
+    """An entry saving into a season folder of a show Jellyfin already lists."""
+    season = tmp_path / "library" / "The Show" / "Season 2"
+    rig = Rig(tmp_path, [_entry(download_dir = str(season))], {4: EP4_AIRED})
+    jf = _jellyfin(rig, tmp_path, **jellyfin)
+    show_root = jellyfin.get("libraries", {}).get("Anime", [str(tmp_path / "library")])[0]
+    show = jf.add_show("Anime", "The Show", f"{show_root}/The Show")
+    return rig, jf, show, season
+
+
+@pytest.mark.asyncio
+async def test_a_finished_episode_is_scanned_into_jellyfin_and_confirmed(tmp_path):
+    rig, jf, show, season = _show_rig(tmp_path)
+    jf.on_scan = lambda item: jf.add_episode(show, str(season / EP4_FILE), 2, 4)
+
+    await _finish(rig, "h4", season, EP4_FILE)
+    [arrival] = rig.tstate.arrivals()
+    assert (arrival.title, arrival.episode, arrival.path) == ("The Show Season 2", 4, str(season / EP4_FILE))
+    with patch("lydarr.jellyfin._request", jf):
+        await rig.tracker.announce(NOW + ANNOUNCE_DELAY - 1)
+    assert jf.calls == []
+
+    times = await _announce_until_done(rig, jf)
+
+    assert times == [NOW + ANNOUNCE_DELAY, NOW + ANNOUNCE_DELAY + SCAN_WAITS[0]]
+    assert jf.scans == [show]
+    event = rig.tstate.activity()[0]
+    assert (event["kind"], event["title"], event["episode"]) == ("in_jellyfin", "The Show Season 2", 4)
+    assert (event["detail"], event["dir"]) == ("listed as The Show S02E04", str(season / EP4_FILE))
+
+
+@pytest.mark.asyncio
+async def test_a_show_new_to_jellyfin_gets_its_library_scanned(tmp_path):
+    folder = tmp_path / "library" / "The Show Season 2"
+    rig = Rig(tmp_path, [_entry()], {4: EP4_AIRED})
+    jf = _jellyfin(rig, tmp_path)
+
+    def scan(item):
+        show = jf.add_show("Anime", "The Show", str(folder))
+        jf.add_episode(show, str(folder / EP4_FILE), 1, 4)
+
+    jf.on_scan = scan
+    await _finish(rig, "h4", folder, EP4_FILE)
+    await _announce_until_done(rig, jf)
+
+    assert jf.scans == ["lib-Anime"]
+    assert rig.tstate.activity()[0]["detail"] == "listed as The Show S01E04"
+
+
+@pytest.mark.asyncio
+async def test_an_episode_that_never_shows_up_is_reported_after_the_last_scan(tmp_path):
+    rig, jf, show, season = _show_rig(tmp_path)
+
+    await _finish(rig, "h4", season, EP4_FILE)
+    times = await _announce_until_done(rig, jf)
+
+    assert jf.scans == [show] * len(SCAN_WAITS)
+    assert times[-1] - times[0] == sum(SCAN_WAITS)
+    event = rig.tstate.activity()[0]
+    assert event["kind"] == "not_in_jellyfin"
+    assert event["detail"] == f"not listed after {len(SCAN_WAITS)} scans; looked for {season / EP4_FILE}"
+
+
+@pytest.mark.asyncio
+async def test_a_download_outside_every_library_is_reported_at_once(tmp_path):
+    folder = tmp_path / "library" / "The Show Season 2"
+    rig = Rig(tmp_path, [_entry()], {4: EP4_AIRED})
+    jf = _jellyfin(rig, tmp_path, libraries = {"Anime": ["/srv/anime"]})
+
+    await _finish(rig, "h4", folder, EP4_FILE)
+    await _announce_until_done(rig, jf)
+
+    assert jf.scans == []
+    event = rig.tstate.activity()[0]
+    assert event["kind"] == "not_in_jellyfin"
+    assert event["detail"] == f"no Jellyfin library holds {folder / EP4_FILE}; see JELLYFIN_PATH_MAP"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location, path_map", [
+    ("/media/Anime", "explicit"),
+    ("/media/library", None),
+])
+async def test_jellyfin_may_see_the_files_under_another_root(tmp_path, location, path_map):
+    pairs = [(str(tmp_path / "library"), location)] if path_map else []
+    rig, jf, show, season = _show_rig(tmp_path, libraries = {"Anime": [location]}, path_map = pairs)
+    remote = f"{location}/The Show/Season 2/{EP4_FILE}"
+    jf.on_scan = lambda item: jf.add_episode(show, remote, 2, 4)
+
+    await _finish(rig, "h4", season, EP4_FILE)
+    await _announce_until_done(rig, jf)
+
+    assert jf.scans == [show]
+    assert rig.tstate.activity()[0]["dir"] == remote
+
+
+@pytest.mark.asyncio
+async def test_episodes_of_one_show_finishing_together_share_a_scan(tmp_path):
+    rig, jf, show, season = _show_rig(tmp_path)
+
+    def scan(item):
+        jf.add_episode(show, str(season / EP4_FILE), 2, 4)
+        jf.add_episode(show, str(season / EP5_FILE), 2, 5)
+
+    jf.on_scan = scan
+    await _finish(rig, "h4", season, EP4_FILE, episode = 4)
+    await _finish(rig, "h5", season, EP5_FILE, episode = 5)
+    await _announce_until_done(rig, jf)
+
+    assert jf.scans == [show]
+    assert sorted(e["episode"] for e in rig.tstate.activity() if e["kind"] == "in_jellyfin") == [4, 5]
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_jellyfin_holds_the_queue_and_is_logged_once(tmp_path, caplog):
+    rig, jf, show, season = _show_rig(tmp_path)
+    await _finish(rig, "h4", season, EP4_FILE)
+    due = NOW + ANNOUNCE_DELAY
+
+    jf.down = True
+    with patch("lydarr.jellyfin._request", jf), caplog.at_level("WARNING", logger = "lydarr.tracker"):
+        await rig.tracker.announce(due)
+        await rig.tracker.announce(due + 30)
+        assert len(jf.calls) == 1
+        await rig.tracker.announce(due + JELLYFIN_RETRY)
+        assert len(jf.calls) == 2
+    assert caplog.text.count("Jellyfin: cannot reach") == 1
+    assert rig.tstate.arrivals()[0].scans == 0
+
+    jf.down = False
+    with patch("lydarr.jellyfin._request", jf):
+        await rig.tracker.announce(due + 2 * JELLYFIN_RETRY)
+    assert jf.scans == [show]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_api_key_is_named_in_the_log(tmp_path, caplog):
+    rig, jf, show, season = _show_rig(tmp_path)
+    rig.cfg.jellyfin_api_key = "wrong"
+    await _finish(rig, "h4", season, EP4_FILE)
+    with patch("lydarr.jellyfin._request", jf), caplog.at_level("WARNING", logger = "lydarr.tracker"):
+        await rig.tracker.announce(NOW + ANNOUNCE_DELAY)
+    assert "JELLYFIN_API_KEY" in caplog.text
+    assert len(rig.tstate.arrivals()) == 1
+
+
+@pytest.mark.asyncio
+async def test_announcements_are_dropped_after_two_weeks_without_an_answer(tmp_path):
+    rig, jf, show, season = _show_rig(tmp_path)
+    await _finish(rig, "h4", season, EP4_FILE)
+    jf.down = True
+    with patch("lydarr.jellyfin._request", jf):
+        await rig.tracker.announce(NOW + GIVE_UP_AFTER + 1)
+    assert jf.calls == []
+    assert rig.tstate.arrivals() == []
+    assert rig.tstate.activity()[0]["kind"] == "not_in_jellyfin"
+
+
+@pytest.mark.asyncio
+async def test_nothing_is_queued_for_jellyfin_unless_it_is_set_up_or_for_manga(tmp_path):
+    entries = [_entry(), MediaEntry(title = "Book", media_type = "manga", anilist_id = 7)]
+    rig = Rig(tmp_path, entries, {4: EP4_AIRED})
+    await _finish(rig, "h4", tmp_path / "library", EP4_FILE)
+    assert rig.tstate.arrivals() == []
+
+    _jellyfin(rig, tmp_path)
+    await _finish(rig, "c1", tmp_path / "library" / "Book", "Book 001.cbz", episode = None, title = "Book")
+    assert rig.tstate.arrivals() == []
+    await _finish(rig, "unlogged", tmp_path / "library", EP4_FILE, logged = False)
+    [arrival] = rig.tstate.arrivals()
+    assert (arrival.hash, arrival.title, arrival.episode) == ("unlogged", EP4_FILE, None)
+
+
+@pytest.mark.asyncio
+async def test_queued_announcements_survive_a_restart(tmp_path):
+    rig, jf, show, season = _show_rig(tmp_path)
+    await _finish(rig, "h4", season, EP4_FILE)
+    with patch("lydarr.jellyfin._request", jf):
+        await rig.tracker.announce(NOW + ANNOUNCE_DELAY)
+
+    reopened = TrackerState(rig.cfg.state_file)
+    reopened.load()
+    assert reopened.arrivals() == rig.tstate.arrivals()
+    assert reopened.arrivals()[0].scans == 1
 
 
 # ── queries and summaries ────────────────────────────────────────────────────

@@ -1,8 +1,8 @@
 """Keep the test suite off the network.
 
-Anything that would reach AniList, Nyaa or Transmission fails fast unless a test
-supplies its own stand-in, so a test run can never touch a live Transmission
-instance on this machine or spend the AniList rate limit.
+Anything that would reach AniList, Nyaa, Transmission or Jellyfin fails fast unless
+a test supplies its own stand-in, so a test run can never touch a live Transmission
+or Jellyfin instance or spend the AniList rate limit.
 """
 from unittest.mock import AsyncMock, patch
 
@@ -19,5 +19,7 @@ def no_network():
          patch("nyaa.http._get", new_callable = AsyncMock,
                side_effect = HttpError("network disabled in tests")), \
          patch("lydarr.torrent_client._rpc", new_callable = AsyncMock,
+               side_effect = ConnectionError("network disabled in tests")), \
+         patch("lydarr.jellyfin._request", new_callable = AsyncMock,
                side_effect = ConnectionError("network disabled in tests")):
         yield

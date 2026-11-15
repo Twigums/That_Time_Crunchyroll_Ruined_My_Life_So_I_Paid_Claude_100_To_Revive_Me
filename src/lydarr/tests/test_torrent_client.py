@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 from lydarr.torrent_client import (
-    AddedTorrent, _rpc, add_magnet, is_client_up, remove_torrents, torrent_progress, wait_for_client,
+    AddedTorrent, TorrentStatus, _rpc, add_magnet, is_client_up, remove_torrents, torrent_progress, wait_for_client,
 )
 
 
@@ -179,17 +179,21 @@ async def test_add_magnet_without_torrent_details_is_a_failure():
 @pytest.mark.asyncio
 async def test_progress_is_keyed_by_hash_not_session_id():
     body = {"arguments": {"torrents": [
-        {"hashString": "AAA", "percentDone": 1},
+        {"hashString": "AAA", "percentDone": 1, "name": "[Group] Show - 01.mkv", "downloadDir": "/media/Show"},
         {"hashString": "bbb", "percentDone": 0.25},
     ]}}
     with patch("lydarr.torrent_client._rpc", new_callable = AsyncMock,
                return_value = _mock_response(200, body)) as rpc:
         progress = await torrent_progress(URL, USER, PASS, ["aaa", "bbb", "ccc"])
 
-    assert progress == {"aaa": 1.0, "bbb": 0.25}
+    assert progress == {
+        "aaa": TorrentStatus(done = 1.0, name = "[Group] Show - 01.mkv", download_dir = "/media/Show"),
+        "bbb": TorrentStatus(done = 0.25),
+    }
     method, arguments = rpc.await_args.args[3], rpc.await_args.args[4]
     assert method == "torrent-get"
     assert arguments["ids"] == ["aaa", "bbb", "ccc"]
+    assert {"name", "downloadDir"} <= set(arguments["fields"])
 
 
 @pytest.mark.asyncio
