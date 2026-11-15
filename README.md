@@ -41,7 +41,7 @@ On a wide screen there are three panels; on a phone a bar at the bottom switches
 - When you arrive from the calendar (a show and an episode number), every result is labelled with what the tracker makes of it: **Match**, waiting for a preferred uploader or an HEVC encode, a number that needs checking, or the reason it was ruled out. Results for other episodes are hidden until you ask for them.
 - Adding a release for a tracked show marks that episode as done, so the tracker will not fetch it again.
 
-**Activity.** Every torrent that was added, when, and where it was saved, and, with [Jellyfin](#jellyfin) set up, whether Jellyfin then listed it. At the top are releases the tracker **held for your check**: the right show at the right time, but with an episode number it did not expect. **Add this** downloads it and teaches the tracker that numbering, so the following weeks need no help.
+**Activity.** Every torrent that was added, when, and where it was saved. At the top are releases the tracker **held for your check**: the right show at the right time, but with an episode number it did not expect. **Add this** downloads it and teaches the tracker that numbering, so the following weeks need no help.
 
 ## How an episode is chosen
 
@@ -133,7 +133,7 @@ check_delay = 145
 | File | Contents | Safe to delete? |
 |---|---|---|
 | `anime.toml` | Your watchlist | No |
-| `lydarr-state.json` | Which episodes were downloaded, the activity log, learned numbering, downloads waiting to show up in Jellyfin, whether the tracker is on | Yes, but history is lost and tracking restarts from the next episode to air |
+| `lydarr-state.json` | Which episodes were downloaded, the activity log, learned numbering, whether the tracker is on | Yes, but history is lost and tracking restarts from the next episode to air |
 | `lydarr-cache.json` | AniList data | Yes; it is fetched again |
 
 ### AniList usage
@@ -180,20 +180,14 @@ Otherwise Transmission downloads to `name.mkv.part` and renames at the end, whic
 
 ## Jellyfin
 
-When Transmission finishes a download, lydarr can have Jellyfin scan it in right away and check that the episode really arrived, instead of waiting for Jellyfin's next library scan. Create an API key under *Dashboard → API Keys* in Jellyfin, then set:
+When Transmission finishes a download, lydarr can ask Jellyfin to scan the show it belongs to, so the episode appears without waiting for Jellyfin's next library scan. Create an API key under *Dashboard → API Keys* in Jellyfin, then set:
 
 ```bash
 JELLYFIN_URL=http://jellyfin:8096
 JELLYFIN_API_KEY=0123456789abcdef0123456789abcdef
 ```
 
-For each finished torrent:
-
-1. A minute after it finishes, lydarr asks Jellyfin to scan the show whose folder holds the file, the same as *Scan for new and updated files* in Jellyfin's own menu. A show Jellyfin does not list yet gets its whole library scanned instead.
-2. Two minutes later it looks for the file among the show's episodes. While the file is missing, lydarr scans again and waits longer each time (5, 15, 30, then 60 minutes), which covers an rclone mount that is still uploading it. If the file is still missing an hour after the fifth scan, about two hours after the download finished, lydarr stops trying.
-3. **Activity** records **In Jellyfin** with the season and episode number Jellyfin gave it, or **Not in Jellyfin** with the reason.
-
-While Jellyfin is down or refuses the key, finished downloads wait (for up to two weeks) and the log says why once. Manga downloads are left out.
+Two minutes after a download finishes, lydarr finds the Jellyfin show whose folder holds the file and asks Jellyfin to scan it, the same as *Scan for new and updated files* in Jellyfin's own menu. A show Jellyfin does not list yet gets its whole library scanned instead. The two minutes give an rclone mount time to upload the file, which it only starts once Transmission has closed it. lydarr sends the request once and does not check the result; if Jellyfin cannot be reached, the log says so and Jellyfin's next library scan picks the file up.
 
 **Paths.** Jellyfin often sees the same files under another folder: `/home/me/media/Jellyfin/Anime` on this machine might be `/media/Jellyfin/Anime` inside Jellyfin's container. lydarr lines the two up by folder names, so a library folder ending in `Jellyfin/Anime` matches the `Jellyfin/Anime` part of the download path. When the names differ, or two libraries match equally well, give the mapping as `lydarr path=Jellyfin path`, separating several pairs with `;`:
 
@@ -212,7 +206,7 @@ JELLYFIN_PATH_MAP=/home/me/media/Jellyfin=/media/Jellyfin
 | The header says **AniList unavailable** | AniList is down or rate limiting. Nothing to do; cached data is used and it retries by itself. |
 | An episode landed in the wrong folder | Check the show's *Save path*, and that **Save to** named that show when you added a torrent by hand. The Activity log records where each torrent went. |
 | **Transmission did not accept the torrent** | Transmission is not running, or the save path is not writable by its user. |
-| Activity says **Not in Jellyfin** | *No Jellyfin library holds…*: the download path did not line up with a library folder; set `JELLYFIN_PATH_MAP` (`uv run lydarr check` lists Jellyfin's folders). *Not listed after 5 scans*: Jellyfin scanned but does not list the file; check that Jellyfin can read the folder and recognises the file name. |
+| A new episode does not show up in Jellyfin | Check the log. *No library holds…* means the download path did not line up with a Jellyfin library folder: set `JELLYFIN_PATH_MAP` (`uv run lydarr check` lists Jellyfin's folders). *Asked Jellyfin to scan…* means the request went through: check that Jellyfin can read the folder and recognises the file name. |
 | The Start button reports a systemctl error | `LYDARR_TRANSMISSION_UNIT` / `LYDARR_TRANSMISSION_SCOPE` do not match how Transmission is installed. |
 | The service will not start | `journalctl --user -u lydarr -n 50`. A wrong path in the unit file is the usual cause. |
 
@@ -240,7 +234,7 @@ src/lydarr/
   media_store.py     disk-backed AniList cache shared by everything
   state.py           download history, activity log, tracker state
   tracker.py         the episode queue
-  jellyfin.py        has Jellyfin scan finished downloads in, then finds them
+  jellyfin.py        asks Jellyfin to scan finished downloads in
   web/               FastAPI app, routes and the static UI
 ```
 

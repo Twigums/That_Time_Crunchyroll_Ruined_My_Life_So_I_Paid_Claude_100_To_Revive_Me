@@ -5,8 +5,7 @@ import pytest
 
 from lydarr.__main__ import _jellyfin_check, _jellyfin_line
 from lydarr.jellyfin import (
-    Item, Jellyfin, JellyfinError, JellyfinUnavailable, Placement, _request as real_request, from_config, inside,
-    to_jellyfin,
+    Jellyfin, JellyfinError, Placement, _request as real_request, from_config, inside, to_jellyfin,
 )
 from lydarr.tests.fake_jellyfin import KEY, URL, FakeJellyfin
 from lydarr.tests.webrig import make_cfg
@@ -89,29 +88,6 @@ async def test_locate_reports_a_path_no_library_holds():
 
 
 @pytest.mark.asyncio
-async def test_find_matches_a_single_file_or_a_folder_of_files():
-    jf, show = _server()
-    jf.add_episode(show, FILE, 3, 7)
-    jf.add_episode(show, f"{SEASON}/[Group] Batch/ep08.mkv", 3, 8)
-    with patch("lydarr.jellyfin._request", jf):
-        client = Jellyfin(URL, KEY)
-        single = await client.find(await client.locate(FILE))
-        batch = await client.find(await client.locate(f"{SEASON}/[Group] Batch"))
-        missing = await client.find(await client.locate(f"{SEASON}/ep09.mkv"))
-        no_show = await client.find(Placement("/media/Anime/New Show/ep01.mkv"))
-
-    assert single.label() == "Apothecary Diaries S03E07"
-    assert batch.episode == 8
-    assert missing is None and no_show is None
-
-
-def test_labels_say_how_jellyfin_numbered_an_episode():
-    assert Item("1", "ep.mkv", series = "Show", season = 1, episode = 4).label() == "Show S01E04"
-    assert Item("1", "ep.mkv", series = "Show", episode = 12).label() == "Show E12"
-    assert Item("1", "Show - Special", series = "Show").label() == "Show - Special"
-
-
-@pytest.mark.asyncio
 async def test_refresh_asks_for_a_scan_for_new_and_updated_files():
     jf, show = _server()
     with patch("lydarr.jellyfin._request", jf):
@@ -124,34 +100,32 @@ async def test_refresh_asks_for_a_scan_for_new_and_updated_files():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status, error, says", [
-    (401, JellyfinError, "JELLYFIN_API_KEY"),
-    (403, JellyfinError, "admin"),
-    (404, JellyfinError, "JELLYFIN_URL"),
-    (502, JellyfinUnavailable, "HTTP 502"),
+@pytest.mark.parametrize("status, says", [
+    (401, "JELLYFIN_API_KEY"),
+    (403, "admin"),
+    (404, "HTTP 404 from /Library/VirtualFolders; check JELLYFIN_URL"),
+    (502, "HTTP 502"),
 ])
-async def test_refusals_and_failures_are_told_apart(status, error, says):
+async def test_refusals_and_failures_say_what_to_check(status, says):
     jf = FakeJellyfin()
     jf.status = status
-    with patch("lydarr.jellyfin._request", jf), pytest.raises(error, match = says) as caught:
+    with patch("lydarr.jellyfin._request", jf), pytest.raises(JellyfinError, match = says):
         await Jellyfin(URL, KEY).libraries()
-    assert (type(caught.value) is JellyfinUnavailable) == (error is JellyfinUnavailable)
 
 
 @pytest.mark.asyncio
-async def test_an_unreachable_server_is_unavailable():
+async def test_an_unreachable_server_is_an_error():
     jf = FakeJellyfin()
     jf.down = True
-    with patch("lydarr.jellyfin._request", jf), pytest.raises(JellyfinUnavailable, match = "cannot reach"):
+    with patch("lydarr.jellyfin._request", jf), pytest.raises(JellyfinError, match = "cannot reach"):
         await Jellyfin(URL, KEY).libraries()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("url", ["jellyfin.invalid:8096", "http://jellyfin.invalid:port"])
-async def test_a_malformed_url_is_a_settings_error(url):
-    with patch("lydarr.jellyfin._request", real_request), pytest.raises(JellyfinError, match = "JELLYFIN_URL") as caught:
+async def test_a_malformed_url_names_the_setting(url):
+    with patch("lydarr.jellyfin._request", real_request), pytest.raises(JellyfinError, match = "JELLYFIN_URL"):
         await Jellyfin(url, KEY).libraries()
-    assert not isinstance(caught.value, JellyfinUnavailable)
 
 
 @pytest.mark.asyncio

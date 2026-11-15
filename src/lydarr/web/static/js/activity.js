@@ -1,6 +1,6 @@
-// Activity: every torrent that was added and when, whether Jellyfin then listed
-// it, plus releases the tracker held back because their numbering was unexpected.
-// A held release is added with one click, which also teaches the tracker that numbering.
+// Activity: every torrent that was added and when, plus releases the tracker
+// held back because their numbering was unexpected. A held release is added
+// with one click, which also teaches the tracker that numbering.
 
 import { $, esc, api, post, toast, fmtWhen, fmtAge, shortPath } from './util.js';
 import { on, emit } from './state.js';
@@ -13,8 +13,6 @@ const KIND = {
   missed: 'Gave up',
   skipped: 'Skipped',
   completed: 'Completed',
-  in_jellyfin: 'In Jellyfin',
-  not_in_jellyfin: 'Not in Jellyfin',
 };
 const REFRESH = 30000;
 const fullDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });

@@ -1,4 +1,4 @@
-"""Jellyfin client: have the server scan the folder a download landed in, then look for the file.
+"""Jellyfin client: have the server scan the folder a download landed in.
 
 lydarr never hands Jellyfin a path to import. It finds the show (or, for a show
 Jellyfin does not know yet, the library) whose folder holds the download and
@@ -15,11 +15,7 @@ TIMEOUT = 20
 
 
 class JellyfinError(Exception):
-    """Jellyfin answered, but refused or did not understand the request."""
-
-
-class JellyfinUnavailable(JellyfinError):
-    """Jellyfin could not be reached, or failed on its side."""
+    """Jellyfin could not be reached, refused the request, or sent something unreadable."""
 
 
 @dataclass(frozen = True)
@@ -30,19 +26,10 @@ class Library:
 
 
 @dataclass(frozen = True)
-class Item:
+class Show:
     id: str
     name: str
     path: str = ""
-    series: str = ""
-    season: int | None = None
-    episode: int | None = None
-
-    def label(self) -> str:
-        if self.episode is None:
-            return self.name or self.series
-        number = f"E{self.episode:02d}" if self.season is None else f"S{self.season:02d}E{self.episode:02d}"
-        return f"{self.series} {number}".strip()
 
 
 @dataclass(frozen = True)
@@ -50,7 +37,7 @@ class Placement:
     """Where a path lydarr saved to sits in Jellyfin."""
     path: str = ""                      # as Jellyfin sees it; empty when it could not be worked out
     library: Library | None = None
-    show: Item | None = None
+    show: Show | None = None
 
 
 # ── paths ─────────────────────────────────────────────────────────────────────
@@ -121,21 +108,6 @@ async def _request(method: str, url: str, api_key: str, params: dict | None = No
         return await client.request(method, url, params = params, headers = headers)
 
 
-def _number(value) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
-def _item(raw: dict) -> Item:
-    return Item(
-        id = str(raw["Id"]),
-        name = str(raw.get("Name") or ""),
-        path = str(raw.get("Path") or ""),
-        series = str(raw.get("SeriesName") or ""),
-        season = _number(raw.get("ParentIndexNumber")),
-        episode = _number(raw.get("IndexNumber")),
-    )
-
-
 class Jellyfin:
     """One round of questions to the server; libraries and shows are fetched once per instance."""
 
@@ -144,7 +116,7 @@ class Jellyfin:
         self.api_key = api_key
         self.path_map = list(path_map or [])
         self._libraries: list[Library] | None = None
-        self._shows: dict[str, list[Item]] = {}
+        self._shows: dict[str, list[Show]] = {}
 
     async def _call(self, method: str, path: str, params: dict | None = None) -> httpx.Response:
         try:
@@ -152,13 +124,11 @@ class Jellyfin:
         except (httpx.InvalidURL, httpx.UnsupportedProtocol) as exc:
             raise JellyfinError(f"JELLYFIN_URL {self.url!r} is not a usable address ({exc})") from exc
         except (httpx.HTTPError, OSError) as exc:
-            raise JellyfinUnavailable(f"cannot reach {self.url} ({str(exc) or type(exc).__name__})") from exc
+            raise JellyfinError(f"cannot reach {self.url} ({str(exc) or type(exc).__name__})") from exc
         if r.status_code == 401:
             raise JellyfinError("the API key was refused (HTTP 401); check JELLYFIN_API_KEY")
         if r.status_code == 403:
             raise JellyfinError("the API key lacks admin rights (HTTP 403)")
-        if r.status_code >= 500:
-            raise JellyfinUnavailable(f"HTTP {r.status_code} from {path}")
         if r.status_code >= 300:
             raise JellyfinError(f"HTTP {r.status_code} from {path}; check JELLYFIN_URL")
         return r
@@ -185,28 +155,25 @@ class Jellyfin:
             ]
         return self._libraries
 
-    async def _items(self, parent_id: str, kind: str) -> list[Item]:
-        raw = await self._json("/Items", {
-            "parentId": parent_id,
-            "includeItemTypes": kind,
-            "recursive": "true",
-            "fields": "Path",
-            "enableImages": "false",
-            "enableUserData": "false",
-            "enableTotalRecordCount": "false",
-        })
-        items = raw.get("Items") if isinstance(raw, dict) else None
-        if not isinstance(items, list):
-            raise JellyfinError("unreadable item list")
-        return [_item(i) for i in items if isinstance(i, dict) and i.get("Id")]
-
-    async def shows(self, library: Library) -> list[Item]:
+    async def shows(self, library: Library) -> list[Show]:
         if library.id not in self._shows:
-            self._shows[library.id] = await self._items(library.id, "Series")
+            raw = await self._json("/Items", {
+                "parentId": library.id,
+                "includeItemTypes": "Series",
+                "recursive": "true",
+                "fields": "Path",
+                "enableImages": "false",
+                "enableUserData": "false",
+                "enableTotalRecordCount": "false",
+            })
+            items = raw.get("Items") if isinstance(raw, dict) else None
+            if not isinstance(items, list):
+                raise JellyfinError("unreadable show list")
+            self._shows[library.id] = [
+                Show(id = str(i["Id"]), name = str(i.get("Name") or ""), path = str(i.get("Path") or ""))
+                for i in items if isinstance(i, dict) and i.get("Id")
+            ]
         return self._shows[library.id]
-
-    async def episodes(self, show: Item) -> list[Item]:
-        return await self._items(show.id, "Episode")
 
     async def refresh(self, item_id: str) -> None:
         """Scan an item's folder for new and changed files, as Jellyfin's own UI does."""
@@ -229,12 +196,6 @@ class Jellyfin:
         shows = [show for show in await self.shows(library) if inside(remote, show.path)]
         show = max(shows, key = lambda s: len(_norm(s.path)), default = None)
         return Placement(path = remote, library = library, show = show)
-
-    async def find(self, place: Placement) -> Item | None:
-        """The episode Jellyfin lists for the file, or the folder of files, at `place.path`."""
-        if place.show is None:
-            return None
-        return next((e for e in await self.episodes(place.show) if inside(e.path, place.path)), None)
 
 
 def from_config(cfg: AppConfig) -> Jellyfin | None:
