@@ -17,7 +17,9 @@ const KIND = {
 const REFRESH = 30000;
 const fullDate = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
-let data = { review: [], events: [] };
+const ADDED = new Set(['grabbed', 'approved', 'manual']);
+
+let data = { review: [], events: [], jellyfin: false };
 
 function pad(number) {
   return String(number).padStart(2, '0');
@@ -68,11 +70,16 @@ function eventRow(event, index) {
   if (event.dir) lines.push(`→ ${esc(event.dir)}`);
   if (!event.name && event.detail) lines.push(esc(event.detail));
   const canRetry = (event.kind === 'missed' || event.kind === 'skipped') && episode;
+  const action = canRetry
+    ? `<button type="button" class="btn small" data-retry="${index}">Try again</button>`
+    : data.jellyfin && ADDED.has(event.kind) && event.name && event.dir
+      ? `<a class="btn small" href="/api/activity/${encodeURIComponent(event.id)}/jellyfin" target="_blank" rel="noopener">Jellyfin</a>`
+      : '';
   return `
     <div class="event">
       <div class="event-time" title="${esc(fullDate.format(new Date(event.ts * 1000)))}">${esc(fmtWhen(event.ts))}</div>
       <div><span class="event-what">${esc(label)}</span> ${esc(event.title)}${esc(episode)}</div>
-      <div>${canRetry ? `<button type="button" class="btn small" data-retry="${index}">Try again</button>` : ''}</div>
+      <div>${action}</div>
       <div class="event-detail">${lines.join('<br>')}</div>
     </div>`;
 }
@@ -93,7 +100,7 @@ function render() {
 async function refresh() {
   try {
     const fresh = await api('/api/activity');
-    data = { review: fresh.review || [], events: fresh.events || [] };
+    data = { review: fresh.review || [], events: fresh.events || [], jellyfin: Boolean(fresh.jellyfin) };
     render();
   } catch (error) {
     $('#pane-activity').innerHTML = `<div class="notice bad">${esc(error.message)}</div>`;

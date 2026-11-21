@@ -1,11 +1,14 @@
-"""Jellyfin client: have the server scan the folder a download landed in.
+"""Jellyfin client: have the server scan the folder a download landed in, and link to it.
 
 lydarr never hands Jellyfin a path to import. It finds the show (or, for a show
 Jellyfin does not know yet, the library) whose folder holds the download and
 asks for that item to be scanned: the request behind "Scan for new and updated
-files" in Jellyfin's own UI.
+files" in Jellyfin's own UI. The same lookup, down to the episode, gives the
+page in Jellyfin's web client to open for a download.
 """
+import os
 from dataclasses import dataclass
+from urllib.parse import urlencode
 
 import httpx
 
@@ -30,6 +33,13 @@ class Show:
     id: str
     name: str
     path: str = ""
+
+
+@dataclass(frozen = True)
+class Episode:
+    id: str
+    path: str = ""
+    number: int | None = None
 
 
 @dataclass(frozen = True)
@@ -98,6 +108,11 @@ def to_jellyfin(path: str, path_map: list[tuple[str, str]], locations: list[str]
     if any(inside(path, location) for location in locations):
         return _norm(path)
     return _line_up(path, locations)
+
+
+def _stem(name: str) -> str:
+    root, ext = os.path.splitext(name)
+    return (root if 1 < len(ext) <= 5 and " " not in ext else name).casefold()
 
 
 # ── the server ────────────────────────────────────────────────────────────────
@@ -174,6 +189,61 @@ class Jellyfin:
                 for i in items if isinstance(i, dict) and i.get("Id")
             ]
         return self._shows[library.id]
+
+    async def episodes(self, show: Show) -> list[Episode]:
+        raw = await self._json("/Items", {
+            "parentId": show.id,
+            "includeItemTypes": "Episode",
+            "recursive": "true",
+            "fields": "Path",
+            "enableImages": "false",
+            "enableUserData": "false",
+            "enableTotalRecordCount": "false",
+        })
+        items = raw.get("Items") if isinstance(raw, dict) else None
+        if not isinstance(items, list):
+            raise JellyfinError("unreadable episode list")
+        return [
+            Episode(
+                id = str(i["Id"]),
+                path = str(i.get("Path") or ""),
+                number = i["IndexNumber"] if isinstance(i.get("IndexNumber"), int) else None,
+            )
+            for i in items if isinstance(i, dict) and i.get("Id")
+        ]
+
+    async def server_id(self) -> str:
+        raw = await self._json("/System/Info/Public")
+        if not isinstance(raw, dict) or not raw.get("Id"):
+            raise JellyfinError("unreadable server info")
+        return str(raw["Id"])
+
+    def web_link(self, item_id: str, server_id: str) -> str:
+        return f"{self.url}/web/#/details?{urlencode({'id': item_id, 'serverId': server_id})}"
+
+    async def find(self, path: str, episode: int | None = None) -> str | None:
+        """The Jellyfin item to open for a download: its episode, else its show, else its library.
+
+        `path` is the torrent's file or folder as lydarr saved it. An episode
+        whose file is that path, lies under it, or has its name (the torrent's
+        name may lack the extension) wins when it is the only one; failing that,
+        the show's only episode numbered `episode`.
+        """
+        place = await self.locate(path)
+        if place.show is None:
+            return place.library.id if place.library else None
+        listed = await self.episodes(place.show)
+        stem = _stem(os.path.basename(_norm(place.path)))
+        for picks in (
+            [e for e in listed if inside(e.path, place.path)],
+            [e for e in listed if _stem(os.path.basename(_norm(e.path))) == stem],
+            [e for e in listed if episode is not None and e.number == episode],
+        ):
+            if len(picks) == 1:
+                return picks[0].id
+            if picks:
+                break
+        return place.show.id
 
     async def refresh(self, item_id: str) -> None:
         """Scan an item's folder for new and changed files, as Jellyfin's own UI does."""

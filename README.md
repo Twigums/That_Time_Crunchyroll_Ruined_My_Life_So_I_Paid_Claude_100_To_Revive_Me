@@ -41,7 +41,7 @@ On a wide screen there are three panels; on a phone a bar at the bottom switches
 - When you arrive from the calendar (a show and an episode number), every result is labelled with what the tracker makes of it: **Match**, waiting for a preferred uploader or an HEVC encode, a number that needs checking, or the reason it was ruled out. Results for other episodes are hidden until you ask for them.
 - Adding a release for a tracked show marks that episode as done, so the tracker will not fetch it again.
 
-**Activity.** Every torrent that was added, when, and where it was saved. At the top are releases the tracker **held for your check**: the right show at the right time, but with an episode number it did not expect. **Add this** downloads it and teaches the tracker that numbering, so the following weeks need no help.
+**Activity.** Every torrent that was added, when, and where it was saved; with [Jellyfin](#jellyfin) set up, **Jellyfin** opens the episode there. At the top are releases the tracker **held for your check**: the right show at the right time, but with an episode number it did not expect. **Add this** downloads it and teaches the tracker that numbering, so the following weeks need no help.
 
 ## How an episode is chosen
 
@@ -196,6 +196,8 @@ JELLYFIN_PATH_MAP=/home/me/media/Jellyfin=/media/Jellyfin
 ```
 
 `uv run lydarr check "title"` lists Jellyfin's library folders and, for each show, the Jellyfin show and folder its downloads land in. It never asks Jellyfin to scan.
+
+**Links.** Each added torrent in **Activity** gets a **Jellyfin** button that opens its page in Jellyfin's web client. lydarr looks the episode up when you press it, by the file's path, falling back to the torrent's name and then the episode number. If Jellyfin has not scanned it yet, or a batch holds several episodes, the button opens the show instead, and for a show Jellyfin does not list yet, the library. The link points at `JELLYFIN_URL`, so that address must also work from your browser.
 
 ## Troubleshooting
 
