@@ -7,7 +7,7 @@ from lydarr.__main__ import _jellyfin_check, _jellyfin_line
 from lydarr.jellyfin import (
     Jellyfin, JellyfinError, Placement, _request as real_request, from_config, inside, to_jellyfin,
 )
-from lydarr.tests.fake_jellyfin import KEY, URL, FakeJellyfin
+from lydarr.tests.fake_jellyfin import KEY, SERVER_ID, URL, FakeJellyfin
 from lydarr.tests.webrig import make_cfg
 
 SEASON = "/media/Anime/Apothecary Diaries/Season 3"
@@ -85,6 +85,60 @@ async def test_locate_reports_a_path_no_library_holds():
     with patch("lydarr.jellyfin._request", jf):
         assert await Jellyfin(URL, KEY).locate("/elsewhere/ep.mkv") == Placement()
         assert await Jellyfin(URL, KEY, [("/elsewhere", "/mnt")]).locate("/elsewhere/ep.mkv") == Placement("/mnt/ep.mkv")
+
+
+@pytest.mark.asyncio
+async def test_find_picks_the_episode_whose_file_is_the_download():
+    jf, show = _server()
+    jf.add_episode(show, f"{SEASON}/[Erai-raws] Kusuriya no Hitorigoto 3rd Season - 06 [1080p].mkv", 6)
+    wanted = jf.add_episode(show, FILE, 7)
+    with patch("lydarr.jellyfin._request", jf):
+        client = Jellyfin(URL, KEY)
+        assert await client.find(FILE) == wanted
+        assert await client.find(FILE.removesuffix(".mkv")) == wanted
+
+
+@pytest.mark.asyncio
+async def test_find_falls_back_to_a_folder_torrent_then_the_episode_number():
+    jf, show = _server()
+    in_folder = jf.add_episode(show, f"{SEASON}/[Group] Batch/ep 08.mkv", 8)
+    renamed = jf.add_episode(show, f"{SEASON}/Kusuriya 09.mkv", 9)
+    with patch("lydarr.jellyfin._request", jf):
+        client = Jellyfin(URL, KEY)
+        assert await client.find(f"{SEASON}/[Group] Batch") == in_folder
+        assert await client.find(f"{SEASON}/[SubsPlease] Kusuriya - 09 (1080p)", 9) == renamed
+        assert await client.find(f"{SEASON}/[SubsPlease] Kusuriya - 10 (1080p)", 10) == show
+
+
+@pytest.mark.asyncio
+async def test_find_gives_the_show_when_several_episodes_fit():
+    jf, show = _server()
+    jf.add_episode(show, f"{SEASON}/[Group] Batch/ep 01.mkv", 1)
+    jf.add_episode(show, f"{SEASON}/[Group] Batch/ep 02.mkv", 2)
+    jf.add_episode(show, "/media/Anime/Apothecary Diaries/Season 1/ep 05.mkv", 5)
+    jf.add_episode(show, "/media/Anime/Apothecary Diaries/Season 2/ep 05.mkv", 5)
+    with patch("lydarr.jellyfin._request", jf):
+        client = Jellyfin(URL, KEY)
+        assert await client.find(f"{SEASON}/[Group] Batch", 1) == show
+        assert await client.find(f"{SEASON}/new ep 05.mkv", 5) == show
+
+
+@pytest.mark.asyncio
+async def test_find_gives_the_library_for_an_unknown_show_and_nothing_outside_one():
+    jf, _ = _server()
+    with patch("lydarr.jellyfin._request", jf):
+        client = Jellyfin(URL, KEY)
+        assert await client.find("/media/Anime/New Show/ep 01.mkv") == "lib-Anime"
+        assert await client.find("/elsewhere/ep 01.mkv") is None
+
+
+@pytest.mark.asyncio
+async def test_web_link_opens_the_item_in_jellyfins_web_client():
+    jf, show = _server()
+    with patch("lydarr.jellyfin._request", jf):
+        client = Jellyfin(URL + "/", KEY)
+        link = client.web_link(show, await client.server_id())
+    assert link == f"{URL}/web/#/details?id={show}&serverId={SERVER_ID}"
 
 
 @pytest.mark.asyncio

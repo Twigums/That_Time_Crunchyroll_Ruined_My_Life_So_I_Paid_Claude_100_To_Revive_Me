@@ -190,5 +190,8 @@ class TrackerState:
             self._activity = self._activity[-ACTIVITY_LIMIT:]
         return event
 
+    def event(self, event_id: int) -> dict | None:
+        return next((e for e in self._activity if e.get("id") == event_id), None)
+
     def activity(self, limit: int = 200) -> list[dict]:
         return list(reversed(self._activity[-limit:]))

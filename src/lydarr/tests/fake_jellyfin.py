@@ -1,4 +1,4 @@
-"""A Jellyfin server in memory: libraries and shows, and the scans asked of it.
+"""A Jellyfin server in memory: libraries, shows and episodes, and the scans asked of it.
 
 Patch `lydarr.jellyfin._request` with an instance.
 """
@@ -8,6 +8,7 @@ import httpx
 
 URL = "http://jellyfin.invalid"
 KEY = "test-key"
+SERVER_ID = "e1265f8d60cc48f38c3f36a9b5719435"
 
 
 class FakeJellyfin:
@@ -17,6 +18,7 @@ class FakeJellyfin:
             for name, locations in (libraries or {}).items()
         ]
         self.shows: list[dict] = []
+        self.episodes: list[dict] = []
         self.scans: list[str] = []
         self.calls: list[tuple[str, str, dict]] = []
         self.down = False
@@ -26,6 +28,11 @@ class FakeJellyfin:
         show_id = f"show-{len(self.shows)}"
         self.shows.append({"Id": show_id, "Name": name, "Path": path, "Type": "Series", "library": f"lib-{library}"})
         return show_id
+
+    def add_episode(self, show_id: str, path: str, number: int | None = None) -> str:
+        episode_id = f"ep-{len(self.episodes)}"
+        self.episodes.append({"Id": episode_id, "Path": path, "IndexNumber": number, "Type": "Episode", "show": show_id})
+        return episode_id
 
     async def __call__(self, method: str, url: str, api_key: str, params: dict | None = None) -> httpx.Response:
         params = dict(params or {})
@@ -45,6 +52,14 @@ class FakeJellyfin:
                 for show in self.shows if show["library"] == params.get("parentId")
             ]
             return httpx.Response(200, json = {"Items": listed, "TotalRecordCount": len(listed), "StartIndex": 0})
+        if method == "GET" and path == "/Items" and params.get("includeItemTypes") == "Episode":
+            listed = [
+                {k: v for k, v in ep.items() if k != "show"}
+                for ep in self.episodes if ep["show"] == params.get("parentId")
+            ]
+            return httpx.Response(200, json = {"Items": listed, "TotalRecordCount": len(listed), "StartIndex": 0})
+        if method == "GET" and path == "/System/Info/Public":
+            return httpx.Response(200, json = {"Id": SERVER_ID, "ServerName": "fake", "Version": "10.11.0"})
         if method == "POST" and path.startswith("/Items/") and path.endswith("/Refresh"):
             item_id = path.split("/")[2]
             if item_id not in {show["Id"] for show in self.shows} | {lib["ItemId"] for lib in self.libraries}:

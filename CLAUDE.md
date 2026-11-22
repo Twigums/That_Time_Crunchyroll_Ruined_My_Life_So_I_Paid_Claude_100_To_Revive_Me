@@ -43,7 +43,7 @@ lydarr-py/
     ├── nyaa_search.py      # find_candidates() (one newest-first request per check; numbered queries only for catch-up), search_chapter() for manga
     ├── state.py            # TrackerState: per-episode records, learned offsets, activity log, torrents to reap, tracker on/off; JSON on disk
     ├── torrent_client.py   # Transmission JSON-RPC: add_magnet() → AddedTorrent, torrent_progress() → TorrentStatus, remove_torrents(); all by info hash
-    ├── jellyfin.py         # Jellyfin client: locate() a path's library and show, refresh() an item; to_jellyfin() path mapping
+    ├── jellyfin.py         # Jellyfin client: locate() a path's library and show, refresh() an item, find() + web_link() for UI links; to_jellyfin() path mapping
     ├── tracker.py          # Tracker: tick() scheduler, review/approve/skip/retry, manual_add(), preview(), reap(), scan_jellyfin(), manga loop
     ├── __main__.py         # CLI: `lydarr` (web + tracker), `--no-web`, `lydarr check`
     ├── web/
@@ -51,7 +51,7 @@ lydarr-py/
     │   ├── routes/
     │   │   ├── anime.py    # /api/anime/list|search|add|remove|deprecate|reactivate|update|backfill|refresh|calendar
     │   │   ├── torrents.py # /api/torrents/search (optionally judged by the tracker), /api/torrents/add
-    │   │   ├── activity.py # /api/activity, /api/activity/approve|skip|retry
+    │   │   ├── activity.py # /api/activity, /api/activity/approve|skip|retry, /api/activity/{id}/jellyfin (redirect)
     │   │   └── daemon.py   # /api/status, /api/daemon/*, /api/transmission/*, /api/power/start|stop
     │   └── static/         # index.html, app.css, js/*.js (ES modules, no build step, no inline scripts)
     └── tests/
